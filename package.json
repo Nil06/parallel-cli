@@ -1,0 +1,59 @@
+{
+  "name": "@parallel-cli/parallel",
+  "version": "0.3.3",
+  "description": "Real-time multi-agent coding CLI with shared context, adaptive co-editing, dedicated agent terminals, and headless CI runs.",
+  "keywords": [
+    "cli",
+    "ai",
+    "agents",
+    "multi-agent",
+    "coding-assistant",
+    "terminal",
+    "ink",
+    "openai-compatible",
+    "deepseek",
+    "real-time"
+  ],
+  "license": "MIT",
+  "author": "Nil Amara",
+  "type": "module",
+  "bin": {
+    "parallel": "dist/index.js",
+    "prl": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsc --watch",
+    "test": "npm run build && node --test test/*.test.mjs && npm run test:pty",
+    "test:pty": "sh test/pty.sh",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "diff": "^5.2.0",
+    "ink": "^5.1.0",
+    "openai": "^4.77.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.2.3",
+    "@types/node": "^18.19.0",
+    "@types/react": "^18.3.12",
+    "typescript": "^5.6.3"
+  }
+}
