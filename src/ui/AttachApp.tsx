@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import net from 'node:net';
 import { Box, Static, Text, useApp } from 'ink';
-import type { AgentInfo, AgentQuestion, ApprovalRequest, LogEntry } from '../types.js';
+import type { AgentInfo, AgentMode, AgentQuestion, ApprovalRequest, LogEntry } from '../types.js';
 import { ApprovalPrompt } from './ApprovalPrompt.js';
 import { CommandInput } from './CommandInput.js';
-import { KIND_COLOR, KIND_DIM } from './AgentPanel.js';
+import { formatAgentTelemetry, KIND_COLOR, KIND_DIM } from './AgentPanel.js';
 import { Md } from './Md.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
 import { Spinner } from './Spinner.js';
@@ -55,6 +55,30 @@ interface WireQuestion {
 }
 
 const noop = (): void => {};
+
+export type AttachCommand =
+  | { type: 'detach' }
+  | { type: 'raw' }
+  | { type: 'spawn'; text: string; mode: AgentMode }
+  | { type: 'input'; text: string };
+
+export function parseAttachCommand(text: string): AttachCommand | null {
+  const v = text.trim();
+  if (!v) return null;
+  if (v === '/quit' || v === '/exit' || v === '/detach') return { type: 'detach' };
+  if (v === '/raw') return { type: 'raw' };
+  const m = v.match(/^\/(ask|a|task|t|plan|p|spawn)\s+(.+)$/s);
+  if (m) {
+    const mode: AgentMode = m[1] === 'ask' || m[1] === 'a' ? 'ask' : m[1] === 'plan' || m[1] === 'p' ? 'plan' : 'task';
+    return { type: 'spawn', text: m[2].trim(), mode };
+  }
+  return { type: 'input', text: v };
+}
+
+export function formatAttachFooter(info: AgentInfo | null): string {
+  if (!info) return 'Waiting for agent · /quit';
+  return `${middleTruncate(info.model, 28)} · ${formatAgentTelemetry(info)} · plain text steers · /task new · /quit`;
+}
 
 export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }) {
   const { exit } = useApp();
@@ -128,24 +152,23 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
   };
 
   const send = (text: string) => {
-    const v = text.trim();
-    if (!v) return;
-    if (v === '/quit' || v === '/exit' || v === '/detach') {
+    const cmd = parseAttachCommand(text);
+    if (!cmd) return;
+    if (cmd.type === 'detach') {
       exit();
       return;
     }
-    if (v === '/raw') {
+    if (cmd.type === 'raw') {
       setRaw((r) => !r);
       return;
     }
-    // /spawn <task> — launch agent N+1 from THIS terminal; its own dedicated
-    // terminal opens automatically (the main TUI stays the session hub).
-    const spawn = v.match(/^\/spawn\s+(.+)$/s);
-    if (spawn) {
-      wire({ type: 'spawn', text: spawn[1] });
+    // /task|/ask|/plan <text> — launch agent N+1 from this terminal; /spawn
+    // remains accepted only as a compatibility alias for task mode.
+    if (cmd.type === 'spawn') {
+      wire({ type: 'spawn', text: cmd.text, mode: cmd.mode });
       return;
     }
-    wire({ type: 'input', agent: agentRef, text: v });
+    wire({ type: 'input', agent: agentRef, text: cmd.text });
   };
 
   const st = info ? STATE_META[info.state] : null;
@@ -314,9 +337,11 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
         onSubmit={send}
         onEscape={() => exit()}
       />
-      <Text color="gray" wrap="truncate-end">
-        {t('attach.hint')}
-      </Text>
+      <Box marginTop={1} marginBottom={1}>
+        <Text color="yellowBright" wrap="truncate-end">
+          {formatAttachFooter(info)}
+        </Text>
+      </Box>
     </Box>
   );
 }

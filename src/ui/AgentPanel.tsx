@@ -33,6 +33,19 @@ export function cleanHubSummary(text: string): string {
     .trim();
 }
 
+export function formatAgentTelemetry(agent: AgentInfo): string {
+  const tokens = Math.round((agent.tokensIn + agent.tokensOut) / 1000);
+  return [
+    elapsed(agent.startedAt),
+    `${agent.steps} st`,
+    `${tokens}k`,
+    agent.ctxPct !== undefined ? `${agent.ctxPct}%` : '',
+    agent.cost === null ? '$-' : fmtCost(agent.cost),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 function agentDisplayName(agent: AgentInfo): string {
   return agent.alias && agent.alias !== agent.name ? `${agent.alias} ${agent.name}` : agent.alias || agent.name;
 }
@@ -71,7 +84,7 @@ export function AgentRow({
   const signalMax = cols < 90 ? 70 : cols < 130 ? 100 : 130;
   const signal = truncate(cleanHubSummary(agent.lastResult || latestSignal(agent, events)), signalMax);
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column" marginBottom={1} paddingLeft={1}>
       <Text wrap="truncate-end">
         <Text color={meta.color} bold>{meta.mark}</Text>
         <Text color={agent.color} bold> {agentDisplayName(agent)}</Text>
@@ -82,7 +95,7 @@ export function AgentRow({
       <Text wrap="truncate-end">  {signal}</Text>
       <Text color={UI.muted} wrap="truncate-end">
         {'  '}
-        {elapsed(agent.startedAt)} · {agent.steps} steps · {agent.cost === null ? '$-' : fmtCost(agent.cost)} · /focus {agent.alias || agent.name}
+        {formatAgentTelemetry(agent)} · /focus {agent.alias || agent.name}
       </Text>
     </Box>
   );
@@ -100,7 +113,6 @@ export function AgentTranscript({
   scrolled?: number;
 }) {
   const meta = STATE_META[agent.state];
-  const tokens = Math.round((agent.tokensIn + agent.tokensOut) / 1000);
   return (
     <Box flexDirection="column">
       <Box justifyContent="space-between">
@@ -115,8 +127,7 @@ export function AgentTranscript({
           </Text>
         </Text>
         <Text color={UI.muted} wrap="truncate-end">
-          {agent.model} · {elapsed(agent.startedAt)} · {agent.steps} st · {tokens}k
-          {agent.ctxPct !== undefined ? ` · ctx ${agent.ctxPct}%` : ''} · {agent.cost === null ? '$-' : fmtCost(agent.cost)}
+          {agent.model} · {formatAgentTelemetry(agent)}
         </Text>
       </Box>
       <Text color={UI.muted} wrap="wrap">

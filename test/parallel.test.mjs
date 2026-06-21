@@ -10,7 +10,9 @@ import { executeInput, matchCommands, visibleCommands } from '../dist/commands.j
 import { Blackboard } from '../dist/coordination/blackboard.js';
 import { isRiskyCommand } from '../dist/controller.js';
 import { costOf } from '../dist/pricing.js';
-import { cleanHubSummary } from '../dist/ui/AgentPanel.js';
+import { cleanHubSummary, formatAgentTelemetry } from '../dist/ui/AgentPanel.js';
+import { formatHubHeader } from '../dist/ui/App.js';
+import { formatAttachFooter, parseAttachCommand } from '../dist/ui/AttachApp.js';
 import { bestCommandCompletion } from '../dist/ui/CommandInput.js';
 import { compactEvents, latestSignal, presentTimeline, summarizeCommandOutput, toUIEvents } from '../dist/ui/events.js';
 
@@ -221,6 +223,62 @@ test('tab and right-arrow completion use the best visible suggestion', () => {
 
 test('hub summaries remove markdown noise', () => {
   assert.equal(cleanHubSummary('## Réponse courte\n**Done** with `src/app.ts`.\n- Tests pass'), 'Réponse courte Done with src/app.ts. Tests pass');
+});
+
+test('agent telemetry and attach footer expose useful compact status', () => {
+  const agent = {
+    id: 'a',
+    name: 'a1',
+    alias: 'a1',
+    color: 'cyan',
+    task: 'inspect the UI',
+    mode: 'task',
+    model: 'deepseek-v4-flash',
+    state: 'done',
+    currentAction: '',
+    steps: 10,
+    tokensIn: 300000,
+    tokensOut: 52000,
+    ctxPct: 52,
+    cost: 0.099,
+    startedAt: Date.now() - 63000,
+  };
+
+  assert.match(formatAgentTelemetry(agent), /1m\d+s · 10 st · 352k · 52% · \$0\.099/);
+  assert.match(formatAttachFooter(agent), /deepseek-v4-flash · 1m\d+s · 10 st · 352k · 52% · \$0\.099 · plain text steers · \/task new · \/quit/);
+  assert.equal(formatAttachFooter(null), 'Waiting for agent · /quit');
+});
+
+test('attached terminal commands support modern agent modes and spawn compatibility', () => {
+  assert.deepEqual(parseAttachCommand('/ask should we merge?'), { type: 'spawn', text: 'should we merge?', mode: 'ask' });
+  assert.deepEqual(parseAttachCommand('/a quick review'), { type: 'spawn', text: 'quick review', mode: 'ask' });
+  assert.deepEqual(parseAttachCommand('/task implement it'), { type: 'spawn', text: 'implement it', mode: 'task' });
+  assert.deepEqual(parseAttachCommand('/t implement it'), { type: 'spawn', text: 'implement it', mode: 'task' });
+  assert.deepEqual(parseAttachCommand('/plan outline it'), { type: 'spawn', text: 'outline it', mode: 'plan' });
+  assert.deepEqual(parseAttachCommand('/p outline it'), { type: 'spawn', text: 'outline it', mode: 'plan' });
+  assert.deepEqual(parseAttachCommand('/spawn old syntax'), { type: 'spawn', text: 'old syntax', mode: 'task' });
+  assert.deepEqual(parseAttachCommand('please continue'), { type: 'input', text: 'please continue' });
+});
+
+test('hub header keeps project session and count information together', () => {
+  const header = formatHubHeader({
+    folder: '/home/nil/Work/Perso/CLI-Agents/parallel',
+    provider: 'DeepSeek',
+    model: 'deepseek-v4-flash',
+    shell: 'auto-safe',
+    cost: '$0.099',
+    needsInput: 1,
+    working: 2,
+    completed: 3,
+    agents: 6,
+    cols: 80,
+    rows: 24,
+  });
+
+  assert.equal(header.title, 'Parallel control room · DeepSeek:deepseek-v4-flash');
+  assert.match(header.project, /Project .* · change: parallel <folder> · sessions: \/sessions · Shell auto-safe · \$0\.099/);
+  assert.equal(header.counts, 'Needs input 1 · Working 2 · Completed 3 · Agents 6');
+  assert.equal(header.sizeHint, 'Best at 120x34 · current 80x24');
 });
 
 test('timeline hides thinking by default and keeps it in raw mode', () => {

@@ -1,28 +1,42 @@
 # Parallel
 
-Real-time multi-agent coding in your terminal.
+Real-time multi-agent coding from one terminal control room.
 
-Parallel lets you run several AI coding agents on the same repository at the same time. Each agent sees the live shared state of the session, can coordinate with the others, and can edit files without silent overwrites.
+Parallel lets you run several AI coding agents on the same repository at the same time. Each agent has its own task, mode, terminal, live activity timeline, and shared view of the session. The hub keeps you in control: what is running, what needs input, what changed, what it cost, and where to steer next.
 
-> You stay in control. Parallel gives you the hub, the live context, the safety rails, and one dedicated terminal per agent.
+> One hub. Many agents. Shared context. No silent overwrites.
 
 [![npm version](https://img.shields.io/npm/v/@parallel-cli/parallel?color=blue)](https://www.npmjs.com/package/@parallel-cli/parallel)
 ![node version](https://img.shields.io/node/v/@parallel-cli/parallel)
 ![license](https://img.shields.io/npm/l/@parallel-cli/parallel)
 ![platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)
 
+## What Parallel Is
+
+Parallel is built for active coding sessions where one agent is not enough:
+
+- ask one agent to audit while another implements
+- run a plan-first agent before allowing edits
+- keep a test-focused agent watching regressions
+- steer any agent live without stopping the others
+- open a dedicated terminal for deep scrollback on one agent
+
+The philosophy is simple: agents can move in parallel, but the human keeps the control room.
+
 ## Features
 
-- Run multiple coding agents in parallel from one terminal hub.
+- Launch agents in three explicit modes: `/ask`, `/task`, and `/plan`.
+- Type plain text to launch a task agent immediately.
+- Run multiple agents at once on the same repository.
 - Open a dedicated terminal per agent with native scrollback and live steering.
-- Share live context between agents: status, notes, file claims, file activity, and recent diffs.
-- Prevent silent overwrites with adaptive merge-on-write for file edits.
-- Spawn agents normally, in plan-first mode, from GitHub issues, or from headless CI scripts.
+- See structured activity timelines instead of raw tool spam.
+- Share live context between agents: status, notes, claims, file activity, and diffs.
+- Avoid silent overwrites with adaptive merge-on-write for file edits.
 - Pause, resume, stop, focus, restore, and steer agents while they are running.
-- Review live diffs, notes, costs, session state, skills, and specialists from built-in views.
-- Use any OpenAI-compatible provider, including DeepSeek, OpenAI-compatible gateways, OpenRouter, Ollama, vLLM, LM Studio, and local servers.
+- Review live diffs, notes, costs, sessions, skills, and specialists from built-in views.
+- Use any OpenAI-compatible provider, including DeepSeek, OpenRouter, Ollama, vLLM, LM Studio, and local servers.
+- Choose shell approval behavior: `ask`, `auto-safe`, or `yolo`.
 - Track token usage and estimated cost per agent and per session.
-- Keep project and global skills/specialists as local markdown files.
 
 ## Install
 
@@ -52,13 +66,7 @@ prl
 
 ## Quick Start
 
-On first launch, Parallel opens a setup wizard for:
-
-1. Language
-2. Working folder
-3. New or restored session
-4. Provider
-5. Model
+On first launch, Parallel opens a setup wizard for language, folder, session, provider, and model.
 
 After setup, type a task and press Enter:
 
@@ -66,13 +74,21 @@ After setup, type a task and press Enter:
 > refactor the API client and update the tests
 ```
 
-Typing another task starts another agent immediately, even while the first one is still working:
+Plain text launches a `/task` agent. Start another agent at any time, even while the first one is still working:
 
 ```text
-> add coverage for the auth middleware
+> add regression coverage for auth middleware
 ```
 
-Send a real-time instruction to one agent:
+Use explicit modes when intent matters:
+
+```text
+/ask reviewer should we split the CLI parser?
+/plan migration propose the safest rollout for the config change
+/task builder implement the approved plan
+```
+
+Send a live instruction to one agent:
 
 ```text
 @a1 also handle empty response bodies
@@ -84,37 +100,99 @@ Broadcast to every agent:
 @all stop changing public interfaces until the test agent finishes
 ```
 
-## Multi-Terminal Sessions
+## Agent Modes
 
-The main TUI is the session hub. Each new agent can open a dedicated terminal connected through `.parallel/session.sock`.
+| Mode | Use it for | Behavior |
+| --- | --- | --- |
+| `/ask` | Questions, reviews, audits, tradeoffs | Answers and advises without editing files. |
+| `/task` | Implementation work | Executes, edits, validates, and summarizes. |
+| `/plan` | Risky or unclear work | Inspects first, asks for approval, then edits only after approval. |
+
+Aliases:
+
+- `/a` -> `/ask`
+- `/t` -> `/task`
+- `/p` -> `/plan`
+
+Plain text is equivalent to `/task`. `/spawn` remains accepted as a compatibility alias for task mode, but it is no longer the primary command.
+
+## Control Room
+
+The main TUI is the Parallel hub. It is designed to answer four questions quickly:
+
+- What needs my input?
+- Which agents are working?
+- What did each agent just do?
+- What model, folder, shell mode, and cost am I currently running?
+
+Useful hub commands:
+
+```text
+/agents              agent overview
+/focus a1            inspect and steer one agent
+/raw                 toggle raw detail in focus view
+/board               shared blackboard, claims, file activity
+/diff                live diff history
+/cost                token and cost breakdown
+/sessions            saved sessions
+/settings            global settings
+/settings-session    session-only settings
+```
+
+Best terminal size is around `120x34`. Parallel still adapts to smaller terminals, but the hub is most readable with enough width for model, folder, status, and agent summaries.
+
+## Dedicated Agent Terminals
+
+Each agent can have its own terminal connected to the same session:
 
 ```bash
-parallel
 parallel attach a1 --root .
 ```
 
 Attached terminals show:
 
-- the agent log in native terminal scrollback
-- state, model, tokens, cost, elapsed time, and current action
-- what the other agents are doing
-- a prompt for steering that specific agent
+- the selected agent's live timeline
+- native terminal scrollback
+- model, elapsed time, steps, tokens, context percentage, and cost
+- other agents' current state
 - approval and question prompts for that agent
+- an input that steers that agent directly
 
 From an attached terminal:
 
 ```text
-/spawn write regression tests for the parser
+plain text sends a message to this agent
+/task write parser regression tests
+/ask is this result safe to merge?
+/plan prepare a migration plan
+/raw
+/quit
 ```
 
-This launches a new agent in the same session. Use `/quit` to detach from an agent terminal.
-
-Toggle automatic agent terminals in the hub:
+Toggle automatic agent terminals from the hub:
 
 ```text
 /attach on
 /attach off
 ```
+
+## Shell Approvals
+
+Parallel separates agent modes from shell approval behavior.
+
+```text
+/approvals ask
+/approvals auto-safe
+/approvals yolo
+```
+
+| Mode | Behavior |
+| --- | --- |
+| `ask` | Ask before shell commands unless explicitly allowed. |
+| `auto-safe` | Auto-approve safe inspection/build/test commands; ask for risky commands. |
+| `yolo` | Auto-approve every shell command. Intended for trusted/headless usage only. |
+
+`auto` is accepted as a compatibility spelling for `auto-safe`.
 
 ## Headless Mode
 
@@ -128,7 +206,7 @@ Headless mode:
 
 - runs one agent per task
 - uses the current folder as the project root
-- auto-approves shell commands
+- uses `yolo` shell approvals
 - auto-answers agent questions with the recommended option
 - saves the session
 - exits non-zero if any agent does not finish successfully
@@ -139,9 +217,10 @@ Headless mode:
 
 | Command | Description |
 | --- | --- |
-| `/spawn [Name:] <task> [--model=m] [#skill]` | Launch an agent. Plain text input does the same. |
-| `/plan [Name:] <task> [--model=m]` | Launch a plan-first agent that asks before editing files. |
-| `/issue <n>` | Spawn an agent from a GitHub issue using the `gh` CLI. |
+| `/ask [Name:] <question> [--model=m]` | Launch an ask-only agent. |
+| `/task [Name:] <task> [--model=m] [#skill]` | Launch a task agent. Plain text does the same. |
+| `/plan [Name:] <task> [--model=m]` | Launch a plan-first agent. |
+| `/issue <n>` | Spawn a task from a GitHub issue using the `gh` CLI. |
 | `/specialist <name> <task>` | Spawn with a specialist persona. |
 | `/specialist new <name> [global]` | Create a specialist template. |
 | `/skill new <name> [global]` | Create a skill template. |
@@ -168,34 +247,34 @@ Headless mode:
 | `/commit [agent\|all] [message]` | Commit files touched by an agent or by all agents. |
 | `/autocommit <on\|off>` | Commit each agent's changes automatically when it finishes. |
 
-### Views
+### Views And Sessions
 
 | Command | Description |
 | --- | --- |
-| `/agents` | Agent grid. |
+| `/agents` | Agent overview. |
 | `/board` | Shared blackboard, file activity, claims, and notes. |
 | `/notes` | Full notes history. |
 | `/diff` | Live diff history. |
 | `/cost` | Token and cost breakdown. |
 | `/skills` | Available skills. |
 | `/specialists` | Available specialists. |
-| `/help` | Full command reference. |
-
-### Sessions And Settings
-
-| Command | Description |
-| --- | --- |
 | `/save [name]` | Save the current session. |
 | `/sessions` | List saved sessions. |
 | `/session <n\|latest>` | Restore a saved session. |
 | `/restore <agent>` | Relaunch a restored agent with its conversation history. |
+
+### Settings
+
+| Command | Description |
+| --- | --- |
 | `/model [[provider:]model]` | Show or switch the session model. |
 | `/key <api-key>` | Store the API key for the active provider. |
-| `/approvals <ask\|auto>` | Require or skip shell command approvals for the session. |
+| `/approvals <ask\|auto-safe\|yolo>` | Set shell approvals for this session. |
 | `/sound <on\|off>` | Toggle terminal bell notifications. |
 | `/settings` | Edit global language, providers, keys, defaults, and approvals. |
 | `/settings-session` | Edit session-only model, approvals, and sound. |
 | `/doctor` | Check provider, key, and model configuration. |
+| `/help` | Full command reference. |
 | `/quit` | Save the session and exit. |
 
 When there is exactly one agent, commands such as `/undo`, `/focus`, `/pause`, `/resume`, `/stop`, and `/commit` can omit the agent name.
@@ -213,14 +292,6 @@ Environment variables:
 | `PARALLEL_BASE_URL` | Override the provider base URL. |
 | `PARALLEL_MODEL` | Override the session model. |
 | `PARALLEL_NO_ALT_SCREEN=1` | Disable the alternate terminal screen. |
-
-Local providers are supported if they expose an OpenAI-compatible endpoint, for example:
-
-- Ollama
-- vLLM
-- LM Studio
-- llama.cpp server
-- OpenRouter or other compatible gateways
 
 Configuration is stored in `~/.parallel/config.json`. Project state, sessions, skills, specialists, and memory are stored under `.parallel/` in the selected project.
 
@@ -259,42 +330,19 @@ When an agent writes a file:
 
 This keeps agents moving without allowing silent overwrites.
 
-## Architecture
+## Codebase Map
 
-At runtime, Parallel is built around four pieces:
+The runtime is intentionally small:
 
-- **Controller**: manages agents, approvals, questions, sessions, terminals, commits, and restores.
-- **Blackboard**: stores live shared state: agents, logs, notes, claims, file activity, and diffs.
-- **Agent loop**: injects live context, calls the model, executes tools, reacts to new information, and marks completion.
-- **Ink UI**: renders the hub, agent panels, settings, views, prompts, and attached terminal UI.
-
-Agent tools include:
-
-- `list_files`
-- `read_file`
-- `write_file`
-- `edit_file`
-- `search`
-- `run_command`
-- `post_note`
-- `update_status`
-- `ask_user`
-- `load_skill`
-- `claim_files`
-- `wait_for_agent`
-- `remember`
-- `task_complete`
-
-## Package
-
-```bash
-npm install -g @parallel-cli/parallel
-```
-
-Published package:
-
-- npm: https://www.npmjs.com/package/@parallel-cli/parallel
-- GitHub: https://github.com/Nil06/parallel-cli
+- `src/index.tsx`: CLI entrypoint, TUI launch, attach mode, and headless mode.
+- `src/controller.ts`: session state, agents, approvals, questions, terminals, commits, and restores.
+- `src/coordination/blackboard.ts`: shared live state for agents, logs, notes, file activity, claims, and diffs.
+- `src/agents/agent.ts`: agent loop, mode instructions, live context injection, and completion.
+- `src/agents/tools.ts`: file, shell, note, skill, memory, and question tools.
+- `src/server.ts`: Unix socket bridge for dedicated agent terminals.
+- `src/ui/`: Ink components for the hub, timelines, settings, prompts, and attach UI.
+- `src/commands.ts`: hub command registry, hidden compatibility commands, aliases, and dispatch.
+- `src/config.ts` and `src/i18n.ts`: provider/session config and translations.
 
 ## Development
 
@@ -310,6 +358,11 @@ Use a local global link while developing:
 npm link
 parallel --help
 ```
+
+Published package:
+
+- npm: https://www.npmjs.com/package/@parallel-cli/parallel
+- GitHub: https://github.com/Nil06/parallel-cli
 
 ## License
 

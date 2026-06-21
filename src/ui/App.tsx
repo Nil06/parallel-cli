@@ -62,6 +62,41 @@ function startupFolder(config: ParallelConfig, initialFolder?: string): string |
   return validFolder(process.cwd());
 }
 
+export function formatHubHeader({
+  folder,
+  provider,
+  model,
+  shell,
+  cost,
+  needsInput,
+  working,
+  completed,
+  agents,
+  cols,
+  rows,
+}: {
+  folder: string;
+  provider: string;
+  model: string;
+  shell: string;
+  cost: string;
+  needsInput: number;
+  working: number;
+  completed: number;
+  agents: number;
+  cols: number;
+  rows: number;
+}): { title: string; project: string; counts: string; sizeHint: string | null } {
+  const providerLabel = provider ? `${provider}:${model}` : '-';
+  const projectMax = Math.max(18, cols - 52);
+  return {
+    title: `${LOGO} control room · ${providerLabel}`,
+    project: `Project ${middleTruncate(folder, projectMax)} · change: parallel <folder> · sessions: /sessions · Shell ${shell} · ${cost}`,
+    counts: `Needs input ${needsInput} · Working ${working} · Completed ${completed} · Agents ${agents}`,
+    sizeHint: cols < 100 || rows < 28 ? `Best at 120x34 · current ${cols}x${rows}` : null,
+  };
+}
+
 export function App({ config, initialFolder }: { config: ParallelConfig; initialFolder?: string }) {
   const { exit } = useApp();
   const initialUsableProvider = usableProvider(config);
@@ -619,15 +654,31 @@ function MainScreen({
   const totalCost = agents.reduce((s, a) => s + (a.cost ?? 0), 0);
   const needsInput = ctl.approvals.length + ctl.questions.length + agents.filter((a) => ['waiting', 'paused'].includes(a.state)).length;
   const completedCount = agents.filter((a) => ['done', 'stopped', 'error'].includes(a.state)).length;
+  const header = formatHubHeader({
+    folder,
+    provider: p?.name ?? '',
+    model: ctl.session.model || p?.defaultModel || p?.models[0] || '-',
+    shell: ctl.session.approvalMode,
+    cost: fmtCost(totalCost),
+    needsInput,
+    working: activeCount,
+    completed: completedCount,
+    agents: agents.length,
+    cols,
+    rows,
+  });
 
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
-        <Text bold color={UI.brand}>{LOGO}</Text>
-        <Text color={UI.muted}>{p ? `${p.name}:${middleTruncate(ctl.session.model, narrow ? 18 : 34)}` : '-'}</Text>
+        <Text bold color={UI.brand}>{LOGO} <Text color={UI.muted}>control room</Text></Text>
+        <Text color={UI.muted}>{p ? `${p.name}:${middleTruncate(ctl.session.model || p.defaultModel || p.models[0] || '-', narrow ? 18 : 34)}` : '-'}</Text>
       </Box>
       <Box justifyContent="space-between">
-        <Text color={UI.muted} wrap="truncate-end">{middleTruncate(folder, Math.max(20, cols - 34))}</Text>
+        <Text color={UI.muted} wrap="truncate-end">
+          Project <Text color={UI.text}>{middleTruncate(folder, Math.max(20, cols - 62))}</Text>
+          {!narrow ? <Text color={UI.muted}> · change: parallel &lt;folder&gt; · sessions: /sessions</Text> : null}
+        </Text>
         <Text color={UI.muted}>Shell {ctl.session.approvalMode} · {fmtCost(totalCost)}</Text>
       </Box>
       <Text color={UI.muted} wrap="truncate-end">
@@ -639,6 +690,7 @@ function MainScreen({
         {'   '}
         <Text>Agents {agents.length}</Text>
       </Text>
+      {header.sizeHint ? <Text color={UI.warn}>{header.sizeHint}</Text> : null}
 
       {/* body */}
       {view === 'settings' ? (
@@ -677,9 +729,11 @@ function MainScreen({
       {/* system messages */}
       {systemLines.length > 0 && !settingsOpen && (
         <Box flexDirection="column">
-          {agents.length > 0 ? <Text color={UI.muted} bold>Recent</Text> : null}
+          {agents.length > 0 ? <Text color={UI.muted} bold>Session</Text> : null}
           {(agents.length > 0
-            ? systemLines.filter((l) => !/^Ready|^Type a task|^⚡ Ready/.test(l)).slice(-3)
+            ? systemLines
+                .filter((l) => !/^Ready|^Type a task|^⚡ Ready|^Default \/task|^Agent .* launched/.test(l))
+                .slice(-2)
             : systemLines
           ).map((l, i) => (
             <Text key={i} color="gray" wrap="truncate-end">{l}</Text>
@@ -720,11 +774,7 @@ function MainScreen({
       <Text color="gray" wrap="truncate-end">
         {agents.length === 0
           ? t('main.status')
-          : t('status.bar', {
-              agents: agents.length,
-              active: activeCount,
-              cost: fmtCost(totalCost),
-            }) +
+          : 'Tab/→ autocomplete · /focus <agent> details · /sessions saved work · /settings config' +
             (ctl.questions.length > 0 ? ` · ❓${ctl.questions.length}` : '') +
             (ctl.approvals.length > 0 ? ` · ⏳${ctl.approvals.length}` : '') +
             (focused ? ` · 🎯 ${focused.name}` : '')}

@@ -2,7 +2,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Controller } from './controller.js';
-import type { AgentInfo, LogEntry } from './types.js';
+import type { AgentInfo, AgentMode, LogEntry } from './types.js';
 
 /**
  * Session server — the bridge that makes MULTI-TERMINAL Parallel possible.
@@ -16,7 +16,7 @@ import type { AgentInfo, LogEntry } from './types.js';
  * Protocol (newline-delimited JSON):
  *   client → server  {type:'hello', agent}          subscribe to one agent
  *   client → server  {type:'input', agent, text}    steer the agent
- *   client → server  {type:'spawn', text}           launch agent N+1 from ANY terminal
+ *   client → server  {type:'spawn', text, mode?}    launch agent N+1 from ANY terminal
  *   client → server  {type:'approve', id, approved, always}  answer an approval
  *   client → server  {type:'answer', id, text}      answer an agent question
  *   server → client  {type:'state', info, others, logs, approval?, question?}
@@ -52,6 +52,7 @@ export function startSessionServer(ctl: Controller): (() => void) | null {
   const clients = new Set<AttachedClient>();
 
   const infoFor = (ref: string): AgentInfo | undefined => ctl.board.getAgentByName(ref);
+  const spawnMode = (mode: unknown): AgentMode => (mode === 'ask' || mode === 'plan' || mode === 'task' ? mode : 'task');
 
   const send = (socket: net.Socket, msg: unknown): void => {
     try {
@@ -137,7 +138,7 @@ export function startSessionServer(ctl: Controller): (() => void) | null {
           // Agent N+1 can be launched from ANY terminal of the session —
           // its own dedicated terminal then opens automatically.
           const task = msg.text.trim();
-          if (task) ctl.spawnAgent(task);
+          if (task) ctl.spawnAgent(task, undefined, undefined, undefined, undefined, undefined, spawnMode(msg.mode));
         }
       }
     });
