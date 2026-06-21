@@ -1,17 +1,18 @@
 import type { AgentState } from '../types.js';
 import { t } from '../i18n.js';
+import { STATE } from './tokens.js';
 
 /** Strong visual cues: icon + label (i18n key) + color per state. */
 export const STATE_LABEL: Record<AgentState, { icon: string; labelKey: string; color: string }> = {
-  idle: { icon: '◇', labelKey: 'st.idle', color: 'gray' },
-  thinking: { icon: '🧠', labelKey: 'st.thinking', color: 'yellow' },
+  idle: { icon: '◇', labelKey: 'st.idle', color: STATE.idle },
+  thinking: { icon: '🧠', labelKey: 'st.thinking', color: STATE.thinking },
   listening: { icon: '👂', labelKey: 'st.listening', color: 'cyanBright' },
   working: { icon: '🔨', labelKey: 'st.working', color: 'green' },
   waiting: { icon: '✋', labelKey: 'st.waiting', color: 'magenta' },
   paused: { icon: '⏸', labelKey: 'st.paused', color: 'blue' },
-  done: { icon: '✅', labelKey: 'st.done', color: 'greenBright' },
+  done: { icon: '✅', labelKey: 'st.done', color: STATE.done },
   error: { icon: '✖', labelKey: 'st.error', color: 'red' },
-  stopped: { icon: '⏹', labelKey: 'st.stopped', color: 'redBright' },
+  stopped: { icon: '⏹', labelKey: 'st.stopped', color: STATE.error },
 };
 
 export function stateLabel(state: AgentState): string {

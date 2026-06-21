@@ -16,10 +16,12 @@ import { CommandInput } from './CommandInput.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { BoardView, CostView, DiffView, HelpView, NotesView, SessionsView, SkillsView, SpecialistsView } from './views.js';
 import { SelectList, WizardStep, type SelectItem } from './Wizard.js';
-import { STATE_META, UI, middleTruncate } from './tokens.js';
+import { ASCII_LOGO, ASCII_LOGO_FALLBACK, BRAND, CHROME, LOGO_MIN_COLS, STATE, STATE_META, UI, middleTruncate } from './tokens.js';
 import type { AgentInfo } from '../types.js';
 
 const LOGO = 'Parallel';
+// Version from package.json (v0.3.3). Hardcoded — rootDir: "src" prevents importing ../../package.json.
+const VERSION = '0.3.3';
 
 type Phase = 'lang' | 'folder' | 'session' | 'provider' | 'model' | 'main';
 type ProviderStep =
@@ -62,40 +64,6 @@ function startupFolder(config: ParallelConfig, initialFolder?: string): string |
   return validFolder(process.cwd());
 }
 
-export function formatHubHeader({
-  folder,
-  provider,
-  model,
-  shell,
-  cost,
-  needsInput,
-  working,
-  completed,
-  agents,
-  cols,
-  rows,
-}: {
-  folder: string;
-  provider: string;
-  model: string;
-  shell: string;
-  cost: string;
-  needsInput: number;
-  working: number;
-  completed: number;
-  agents: number;
-  cols: number;
-  rows: number;
-}): { title: string; project: string; counts: string; sizeHint: string | null } {
-  const providerLabel = provider ? `${provider}:${model}` : '-';
-  const projectMax = Math.max(18, cols - 52);
-  return {
-    title: `${LOGO} control room · ${providerLabel}`,
-    project: `Project ${middleTruncate(folder, projectMax)} · change: parallel <folder> · sessions: /sessions · Shell ${shell} · ${cost}`,
-    counts: `Needs input ${needsInput} · Working ${working} · Completed ${completed} · Agents ${agents}`,
-    sizeHint: cols < 100 || rows < 28 ? `Best at 120x34 · current ${cols}x${rows}` : null,
-  };
-}
 
 export function App({ config, initialFolder }: { config: ParallelConfig; initialFolder?: string }) {
   const { exit } = useApp();
@@ -586,6 +554,22 @@ function MainScreen({
   const narrow = cols < 90;
   const settingsOpen = view === 'settings' || view === 'settings-session';
 
+  // Height budget: fixed sections → body gets the remainder.
+  const wideHeader = cols >= LOGO_MIN_COLS;
+  const headerLines = wideHeader ? (agents.length > 0 ? 3 : 2) : 2;
+  const footerLine2 = 1; // always shown
+  const footerLine1 = agents.length === 0 ? 1 : 0;
+  const footerLines = footerLine1 + footerLine2;
+  const systemMsgLines = systemLines.length > 0 && !settingsOpen ? 1 : 0;
+  const inputLines = 4; // modeHint (1) + input border box (3)
+  const spacerLines = 2; // after header + before footer
+  const approvalHeight = approval ? 6 : 0;
+  const questionHeight = question ? 7 : 0;
+  const bodyHeight = Math.max(
+    1,
+    rows - headerLines - footerLines - systemMsgLines - inputLines - spacerLines - approvalHeight - questionHeight,
+  );
+
   // Focus mode: one agent rendered alone, with scrollback (PgUp/PgDn).
   const focused = focus
     ? agents.find((a) => a.name.toLowerCase() === focus.toLowerCase())
@@ -593,7 +577,7 @@ function MainScreen({
   const [scroll, setScroll] = useState(0);
   const [focusFollowTail, setFocusFollowTail] = useState(true);
   useEffect(() => setScroll(0), [focus]);
-  const FOCUS_LOGS = Math.max(8, rows - 13);
+  const FOCUS_LOGS = Math.max(8, bodyHeight - 1);
   const focusedLogs = focused ? ctl.board.logs.filter((l) => l.agentId === focused.id) : [];
   const maxScroll = Math.max(0, focusedLogs.length - FOCUS_LOGS);
   const clampedScroll = Math.min(scroll, maxScroll);
@@ -606,7 +590,7 @@ function MainScreen({
 
   const [hubScroll, setHubScroll] = useState(0);
   const [hubFollowTail, setHubFollowTail] = useState(true);
-  const hubRows = Math.max(6, Math.floor((rows - 14) / 4));
+  const hubRows = Math.max(6, bodyHeight - 2);
   const maxHubScroll = Math.max(0, agents.length - hubRows);
   const clampedHub = Math.min(hubScroll, maxHubScroll);
   const logSeq = ctl.board.logs.length > 0 ? ctl.board.logs[ctl.board.logs.length - 1].seq ?? ctl.board.logs.length : 0;
@@ -647,84 +631,115 @@ function MainScreen({
     }
   });
 
-  const p = ctl.sessionProvider();
-  const activeCount = agents.filter((a) =>
-    ['working', 'thinking', 'listening', 'waiting'].includes(a.state),
-  ).length;
   const totalCost = agents.reduce((s, a) => s + (a.cost ?? 0), 0);
-  const needsInput = ctl.approvals.length + ctl.questions.length + agents.filter((a) => ['waiting', 'paused'].includes(a.state)).length;
-  const completedCount = agents.filter((a) => ['done', 'stopped', 'error'].includes(a.state)).length;
-  const header = formatHubHeader({
-    folder,
-    provider: p?.name ?? '',
-    model: ctl.session.model || p?.defaultModel || p?.models[0] || '-',
-    shell: ctl.session.approvalMode,
-    cost: fmtCost(totalCost),
-    needsInput,
-    working: activeCount,
-    completed: completedCount,
-    agents: agents.length,
-    cols,
-    rows,
-  });
+  const idleCount = agents.filter((a) => a.state === 'idle').length;
+  const workingCount = agents.filter((a) => ['working', 'thinking', 'listening'].includes(a.state)).length;
+  const doneCount = agents.filter((a) => a.state === 'done').length;
+  const errorCount = agents.filter((a) => ['error', 'stopped'].includes(a.state)).length;
+  const globalDotColor = workingCount > 0 ? 'green'
+    : agents.some((a) => ['waiting', 'paused'].includes(a.state)) ? 'yellow'
+    : 'gray';
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <Box justifyContent="space-between">
-        <Text bold color={UI.brand}>{LOGO} <Text color={UI.muted}>control room</Text></Text>
-        <Text color={UI.muted}>{p ? `${p.name}:${middleTruncate(ctl.session.model || p.defaultModel || p.models[0] || '-', narrow ? 18 : 34)}` : '-'}</Text>
-      </Box>
-      <Box justifyContent="space-between">
-        <Text color={UI.muted} wrap="truncate-end">
-          Project <Text color={UI.text}>{middleTruncate(folder, Math.max(20, cols - 62))}</Text>
-          {!narrow ? <Text color={UI.muted}> · change: parallel &lt;folder&gt; · sessions: /sessions</Text> : null}
-        </Text>
-        <Text color={UI.muted}>Shell {ctl.session.approvalMode} · {fmtCost(totalCost)}</Text>
-      </Box>
-      <Text color={UI.muted} wrap="truncate-end">
-        <Text color={needsInput > 0 ? UI.warn : UI.muted}>Needs input {needsInput}</Text>
-        {'   '}
-        <Text color={activeCount > 0 ? UI.accent : UI.muted}>Working {activeCount}</Text>
-        {'   '}
-        <Text color={completedCount > 0 ? UI.ok : UI.muted}>Completed {completedCount}</Text>
-        {'   '}
-        <Text>Agents {agents.length}</Text>
-      </Text>
-      {header.sizeHint ? <Text color={UI.warn}>{header.sizeHint}</Text> : null}
+    <Box flexDirection="column">
+      {/* ── Header ── */}
+      {cols >= LOGO_MIN_COLS ? (
+        <>
+          <Box flexDirection="row" justifyContent="space-between">
+            <Text color={BRAND.primary}>{ASCII_LOGO[0]}</Text>
+            <Text color={CHROME.muted}>{middleTruncate(folder, 30)}</Text>
+          </Box>
+          <Box flexDirection="row" justifyContent="space-between">
+            <Box flexDirection="row">
+              <Text color={BRAND.primary}>{ASCII_LOGO[1]}</Text>
+              <Text color={globalDotColor}> ●</Text>
+              <Text color={CHROME.muted}> control room</Text>
+            </Box>
+            <Text color={CHROME.muted}>v{VERSION}</Text>
+          </Box>
+          {agents.length > 0 ? (
+            <Box flexDirection="row" justifyContent="space-between">
+              <Text>
+                <Text color={CHROME.muted}>◇ {idleCount} idle</Text>
+                {' · '}
+                <Text color={workingCount > 0 ? STATE.working : CHROME.muted}>● {workingCount} active</Text>
+                {' · '}
+                <Text color={doneCount > 0 ? STATE.done : CHROME.muted}>✓ {doneCount} done</Text>
+                {' · '}
+                <Text color={errorCount > 0 ? STATE.error : CHROME.muted}>✗ {errorCount} err</Text>
+              </Text>
+              <Text color={CHROME.muted}>{fmtCost(totalCost)}</Text>
+            </Box>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <Box flexDirection="row" justifyContent="space-between">
+            <Box flexDirection="row">
+              <Text bold color={BRAND.primary}>{ASCII_LOGO_FALLBACK}</Text>
+              <Text color={globalDotColor}> ●</Text>
+              <Text color={CHROME.muted}> control room</Text>
+            </Box>
+            <Text color={CHROME.muted}>{middleTruncate(folder, 15)}</Text>
+          </Box>
+          {agents.length > 0 ? (
+            <Box flexDirection="row" justifyContent="space-between">
+              <Text>
+                <Text color={CHROME.muted}>◇{idleCount}</Text>
+                {' · '}
+                <Text color={workingCount > 0 ? STATE.working : CHROME.muted}>●{workingCount}</Text>
+                {' · '}
+                <Text color={doneCount > 0 ? STATE.done : CHROME.muted}>✓{doneCount}</Text>
+                {' · '}
+                <Text color={errorCount > 0 ? STATE.error : CHROME.muted}>✗{errorCount}</Text>
+              </Text>
+              <Text color={CHROME.muted}>v{VERSION} · {fmtCost(totalCost)}</Text>
+            </Box>
+          ) : (
+            <Box flexDirection="row" justifyContent="flex-end">
+              <Text color={CHROME.muted}>{middleTruncate(folder, 15)} · v{VERSION}</Text>
+            </Box>
+          )}
+        </>
+      )}
+
+      <Text> </Text>
 
       {/* body */}
-      {view === 'settings' ? (
-        <SettingsPanel ctl={ctl} scope="global" onClose={onEscape} />
-      ) : view === 'settings-session' ? (
-        <SettingsPanel ctl={ctl} scope="session" onClose={onEscape} />
-      ) : view === 'board' ? (
-        <BoardView board={ctl.board} />
-      ) : view === 'notes' ? (
-        <NotesView board={ctl.board} />
-      ) : view === 'sessions' ? (
-        <SessionsView projectRoot={ctl.projectRoot} />
-      ) : view === 'diff' ? (
-        <DiffView board={ctl.board} />
-      ) : view === 'cost' ? (
-        <CostView board={ctl.board} />
-      ) : view === 'skills' ? (
-        <SkillsView skills={ctl.getSkills()} />
-      ) : view === 'specialists' ? (
-        <SpecialistsView specialists={ctl.getSpecialists()} />
-      ) : view === 'help' ? (
-        <HelpView />
-      ) : agents.length === 0 ? (
-        <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
-          <Text color="gray">{t('main.empty')}</Text>
-        </Box>
-      ) : focused ? (
-        <Box flexDirection="column">
-          <AgentTranscript agent={focused} logs={visibleLogs} raw={rawLogs} scrolled={clampedScroll} />
-          {!focusFollowTail ? <Text color={UI.warn}>Viewing older · PgDn to latest</Text> : null}
-        </Box>
-      ) : (
-        <AgentHub agents={agents} ctl={ctl} cols={cols} scroll={clampedHub} visibleRows={hubRows} />
-      )}
+      <Box height={bodyHeight} overflow="hidden" flexDirection="column">
+        {view === 'settings' ? (
+          <SettingsPanel ctl={ctl} scope="global" onClose={onEscape} />
+        ) : view === 'settings-session' ? (
+          <SettingsPanel ctl={ctl} scope="session" onClose={onEscape} />
+        ) : view === 'board' ? (
+          <BoardView board={ctl.board} />
+        ) : view === 'notes' ? (
+          <NotesView board={ctl.board} />
+        ) : view === 'sessions' ? (
+          <SessionsView projectRoot={ctl.projectRoot} />
+        ) : view === 'diff' ? (
+          <DiffView board={ctl.board} />
+        ) : view === 'cost' ? (
+          <CostView board={ctl.board} />
+        ) : view === 'skills' ? (
+          <SkillsView skills={ctl.getSkills()} />
+        ) : view === 'specialists' ? (
+          <SpecialistsView specialists={ctl.getSpecialists()} />
+        ) : view === 'help' ? (
+          <HelpView />
+        ) : agents.length === 0 ? (
+          <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
+            <Text color="gray">{t('main.empty')}</Text>
+          </Box>
+        ) : focused ? (
+          <Box flexDirection="column">
+            <AgentTranscript agent={focused} logs={visibleLogs} raw={rawLogs} scrolled={clampedScroll} />
+            {!focusFollowTail ? <Text color={UI.warn}>Viewing older · PgDn to latest</Text> : null}
+          </Box>
+        ) : (
+          <AgentHub agents={agents} ctl={ctl} cols={cols} scroll={clampedHub} visibleRows={hubRows} />
+        )}
+      </Box>
 
       {/* system messages */}
       {systemLines.length > 0 && !settingsOpen && (
@@ -770,15 +785,37 @@ function MainScreen({
         onEscape={onEscape}
         notify={notify}
       />
-      {/* status bar: live session overview when agents exist, hints otherwise */}
-      <Text color="gray" wrap="truncate-end">
-        {agents.length === 0
-          ? t('main.status')
-          : 'Tab/→ autocomplete · /focus <agent> details · /sessions saved work · /settings config' +
-            (ctl.questions.length > 0 ? ` · ❓${ctl.questions.length}` : '') +
-            (ctl.approvals.length > 0 ? ` · ⏳${ctl.approvals.length}` : '') +
-            (focused ? ` · 🎯 ${focused.name}` : '')}
-      </Text>
+      <Text> </Text>
+      {/* ── Footer (1-2 conditional lines per §6.2) ── */}
+      <Box flexDirection="column">
+        {/* Line 1: Command hints — only when no agents exist */}
+        {agents.length === 0 ? (
+          <Text>
+            <Text color={BRAND.muted}>/ask /task /plan</Text>
+            <Text color={CHROME.muted}> · Tab autocompletes · Esc clears</Text>
+          </Text>
+        ) : null}
+        {/* Line 2: Session status — always shown */}
+        <Text>
+          <Text color={CHROME.muted}>⌘ Parallel</Text>
+          <Text color={CHROME.muted}> · Shell </Text>
+          <Text color={
+            ctl.session.approvalMode === 'ask' ? UI.warn :
+            ctl.session.approvalMode === 'yolo' ? UI.danger :
+            UI.ok
+          }>{ctl.session.approvalMode === 'auto-safe' ? 'auto' : ctl.session.approvalMode}</Text>
+          <Text color={CHROME.muted}> · Sessions: {Controller.listSessions(ctl.projectRoot).length}</Text>
+          {ctl.questions.length > 0 ? (
+            <Text color={UI.warn}> · ❓{ctl.questions.length}</Text>
+          ) : null}
+          {ctl.approvals.length > 0 ? (
+            <Text color={UI.warn}> · ⏳{ctl.approvals.length}</Text>
+          ) : null}
+          {focused ? (
+            <Text color={BRAND.muted}> · 🎯 {focused.name}</Text>
+          ) : null}
+        </Text>
+      </Box>
     </Box>
   );
 }
@@ -827,11 +864,13 @@ function AgentHub({
       );
     }
     if (groupRows.length === 0) continue;
+    if (rows.length > 0) {
+      rows.push(
+        <Text key={`sep-${group.title}`} color={CHROME.separator}>{'─'.repeat(cols - 2)}</Text>,
+      );
+    }
     rows.push(
-      <Box key={group.title} flexDirection="column" marginTop={rows.length === 0 ? 0 : 1}>
-        <Text color={group.color} bold>
-          {group.title}
-        </Text>
+      <Box key={group.title} flexDirection="column">
         {groupRows}
       </Box>,
     );
@@ -839,9 +878,9 @@ function AgentHub({
   const below = Math.max(0, agents.length - scroll - rendered);
   return (
     <Box flexDirection="column">
-      {scroll > 0 ? <Text color={UI.muted}>▲ {scroll} older · PgDn to latest</Text> : null}
+      {scroll > 0 ? <Text color={CHROME.muted}>▲ {scroll} older · PgDn to latest</Text> : null}
       {rows}
-      {below > 0 ? <Text color={UI.muted}>▼ {below} more · PgUp</Text> : null}
+      {below > 0 ? <Text color={CHROME.muted}>▼ {below} more · PgUp</Text> : null}
     </Box>
   );
 }

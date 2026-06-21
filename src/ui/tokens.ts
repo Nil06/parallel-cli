@@ -32,6 +32,58 @@ export const STATE_META: Record<AgentState, { mark: string; label: string; color
   idle: { mark: MARK.idle, label: 'idle', color: UI.muted, rank: 8 },
 };
 
+// ─── Hub redesign tokens (Phase 0) ───────────────────────────────────────────
+
+/** Brand colors — logotype, borders, focus indicator. */
+export const BRAND = {
+  primary: 'cyanBright',
+  muted: 'cyan',
+} as const;
+
+/** Semantic state colors mapped to agent states. */
+export const STATE = {
+  working: 'cyan',
+  thinking: 'yellow',
+  listening: 'yellow',
+  done: 'greenBright',
+  error: 'redBright',
+  waiting: 'yellow',
+  idle: 'gray',
+} as const;
+
+/** Mode indicator colors. `task` is undefined — it renders no mark. */
+export const MODE = {
+  ask: 'yellow',
+  plan: 'blue',
+  task: undefined,
+} as const;
+
+/** Chrome / UI element colors. */
+export const CHROME = {
+  separator: 'gray',
+  muted: 'gray',
+  dim: 'dim',
+} as const;
+
+/** Animation tokens. */
+export const ANIM = {
+  spinner: 'dots',
+  pulseMs: 400,
+  spinnerIntervalMs: 80,
+} as const;
+
+/** 2-line ASCII box-drawing logotype (22 chars wide). */
+export const ASCII_LOGO: readonly [string, string] = [
+  '╔═╗╔═╗╦═╗╔═╗╦  ╦  ╔═╗╦',
+  '╚═╝╚═╝╩╚═╝╚═╝╩═╝╩═╝╚═╝╩═╝',
+];
+
+/** Narrow fallback when terminal < LOGO_MIN_COLS. */
+export const ASCII_LOGO_FALLBACK = 'PARALLEL';
+
+/** Minimum columns required for the full ASCII logo. */
+export const LOGO_MIN_COLS = 80;
+
 export function middleTruncate(text: string, max: number): string {
   if (text.length <= max) return text;
   if (max <= 3) return text.slice(0, max);

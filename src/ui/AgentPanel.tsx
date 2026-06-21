@@ -1,12 +1,12 @@
-import React from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import type { AgentInfo, LogEntry } from '../types.js';
 import { fmtCost } from '../pricing.js';
 import { elapsed, truncate } from './theme.js';
 import { Md } from './Md.js';
-import { latestSignal, presentTimeline } from './events.js';
+import { Spinner } from './Spinner.js';
 import { Timeline } from './Timeline.js';
-import { MARK, STATE_META, UI, middleTruncate } from './tokens.js';
+import { MARK, MODE, STATE_META, UI, ANIM } from './tokens.js';
 
 export const KIND_COLOR: Record<string, string> = {
   tool: UI.accent,
@@ -19,10 +19,6 @@ export const KIND_COLOR: Record<string, string> = {
 
 export const KIND_DIM: Record<string, boolean> = { llm: true };
 
-export function modeLabel(mode: AgentInfo['mode']): string {
-  return mode === 'ask' ? 'Ask' : mode === 'plan' ? 'Plan' : 'Task';
-}
-
 export function cleanHubSummary(text: string): string {
   return text
     .replace(/^#{1,6}\s+/gm, '')
@@ -34,20 +30,7 @@ export function cleanHubSummary(text: string): string {
 }
 
 export function formatAgentTelemetry(agent: AgentInfo): string {
-  const tokens = Math.round((agent.tokensIn + agent.tokensOut) / 1000);
-  return [
-    elapsed(agent.startedAt),
-    `${agent.steps} st`,
-    `${tokens}k`,
-    agent.ctxPct !== undefined ? `${agent.ctxPct}%` : '',
-    agent.cost === null ? '$-' : fmtCost(agent.cost),
-  ]
-    .filter(Boolean)
-    .join(' · ');
-}
-
-function agentDisplayName(agent: AgentInfo): string {
-  return agent.alias && agent.alias !== agent.name ? `${agent.alias} ${agent.name}` : agent.alias || agent.name;
+  return `${elapsed(agent.startedAt)} · ${agent.cost === null ? '$-' : fmtCost(agent.cost)}`;
 }
 
 function ResultBlock({ agent, compact = false }: { agent: AgentInfo; compact?: boolean }) {
@@ -70,6 +53,23 @@ function ResultBlock({ agent, compact = false }: { agent: AgentInfo; compact?: b
   );
 }
 
+const SPINNER_STATES: Set<AgentInfo['state']> = new Set(['thinking', 'working', 'listening', 'waiting']);
+
+function spinnerColor(state: AgentInfo['state']): string {
+  if (state === 'working') return 'cyan';
+  return 'yellow'; // thinking, listening, waiting
+}
+
+function modeChar(mode: AgentInfo['mode']): { char: string; color: string | undefined } | null {
+  if (mode === 'ask') return { char: '?', color: MODE.ask };
+  if (mode === 'plan') return { char: '△', color: MODE.plan };
+  return null; // task = no mark
+}
+
+function agentDisplayName(agent: AgentInfo): string {
+  return agent.alias && agent.alias !== agent.name ? `${agent.alias} ${agent.name}` : agent.alias || agent.name;
+}
+
 export function AgentRow({
   agent,
   logs,
@@ -80,23 +80,63 @@ export function AgentRow({
   cols: number;
 }) {
   const meta = STATE_META[agent.state];
-  const events = presentTimeline(logs);
-  const signalMax = cols < 90 ? 70 : cols < 130 ? 100 : 130;
-  const signal = truncate(cleanHubSummary(agent.lastResult || latestSignal(agent, events)), signalMax);
+
+  // ── State transition pulse (Phase 5) ──
+  const prevState = useRef(agent.state);
+  const [pulse, setPulse] = useState(false);
+  useEffect(() => {
+    if (agent.state !== prevState.current) {
+      setPulse(true);
+      const timer = setTimeout(() => setPulse(false), ANIM.pulseMs);
+      prevState.current = agent.state;
+      return () => clearTimeout(timer);
+    }
+  }, [agent.state]);
+
+  // Pulse bumps the mark/spinner color to whiteBright for 400ms
+  const pulseColor = pulse ? 'whiteBright' : null;
+
+  const name = agentDisplayName(agent);
+  const mode = modeChar(agent.mode);
+  const taskMax = Math.max(10, cols - 18);
+  const line2Max = Math.max(10, cols - 2);
+  const telemetry = formatAgentTelemetry(agent);
+
+  // Line 2 content
+  let line2: { text: string; color: string } | null = null;
+  if (agent.lastResult) {
+    line2 = { text: `✓ ${truncate(cleanHubSummary(agent.lastResult), line2Max)}`, color: UI.ok };
+  } else if (agent.currentAction) {
+    line2 = { text: `▸ ${truncate(agent.currentAction, line2Max)}`, color: UI.accent };
+  } else {
+    line2 = { text: meta.label, color: meta.color };
+  }
+
   return (
-    <Box flexDirection="column" marginBottom={1} paddingLeft={1}>
+    <Box flexDirection="column" marginBottom={0} paddingLeft={1}>
+      {/* Line 1: mark/spinner + name + mode + task */}
       <Text wrap="truncate-end">
-        <Text color={meta.color} bold>{meta.mark}</Text>
-        <Text color={agent.color} bold> {agentDisplayName(agent)}</Text>
-        <Text color={UI.muted}>  {modeLabel(agent.mode)} </Text>
-        <Text color={meta.color} bold>{meta.label}</Text>
+        {SPINNER_STATES.has(agent.state) ? (
+          <Spinner color={pulseColor ?? spinnerColor(agent.state)} />
+        ) : (
+          <Text color={pulseColor ?? meta.color} bold>{meta.mark}</Text>
+        )}
+        <Text> </Text>
+        <Text color={agent.color} bold>{name}</Text>
+        {mode ? (
+          <Text color={mode.color}> {mode.char}</Text>
+        ) : null}
+        <Text color={UI.text}>  {truncate(agent.task, taskMax)}</Text>
       </Text>
-      <Text color={UI.muted} wrap="truncate-end">  {truncate(agent.task, signalMax)}</Text>
-      <Text wrap="truncate-end">  {signal}</Text>
-      <Text color={UI.muted} wrap="truncate-end">
-        {'  '}
-        {formatAgentTelemetry(agent)} · /focus {agent.alias || agent.name}
-      </Text>
+      {/* Line 2: status + right-aligned telemetry */}
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text color={line2.color} wrap="truncate-end">
+          {line2.text}
+        </Text>
+        <Text color={UI.muted}>
+          {telemetry}
+        </Text>
+      </Box>
     </Box>
   );
 }
@@ -172,7 +212,6 @@ export function AgentPanel({
   return (
     <Box width={width} flexDirection="column">
       {expanded ? <AgentTranscript agent={agent} logs={logs} /> : <AgentRow agent={agent} logs={logs} cols={100} />}
-      {!expanded && agent.lastResult ? <ResultBlock agent={agent} compact /> : null}
     </Box>
   );
 }
