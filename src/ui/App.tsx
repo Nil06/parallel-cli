@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { Controller } from '../controller.js';
 import { startSessionServer } from '../server.js';
-import { executeInput, type ViewName, type UIActions } from '../commands.js';
+import { executeInput, type ViewName, type UIActions, type SystemLevel } from '../commands.js';
 import { PROVIDER_PRESETS, getProvider, rememberFolder, saveConfig } from '../config.js';
 import { LANGS, setLang, t } from '../i18n.js';
 import type { Lang, ParallelConfig, ProviderConfig, SessionData } from '../types.js';
@@ -84,8 +84,13 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   // Focus mode (/focus <agent>): plain input is routed to that agent.
   const [focus, setFocus] = useState<string | null>(null);
   const [rawLogs, setRawLogs] = useState(false);
-  const [systemLines, setSystemLines] = useState<string[]>(
-    directFolder ? [t('main.ready1', { folder: directFolder }), t('main.ready2')] : [],
+  const [systemLines, setSystemLines] = useState<{ text: string; level?: SystemLevel }[]>(
+    directFolder
+      ? [
+          { text: t('main.ready1', { folder: directFolder }), level: 'ok' as SystemLevel },
+          { text: t('main.ready2'), level: 'info' as SystemLevel },
+        ]
+      : [],
   );
   const [inputReady, setInputReady] = useState(Boolean(directFolder));
 
@@ -125,22 +130,34 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   const ui: UIActions = useMemo(
     () => ({
       setView,
-      system: (line: string) => setSystemLines((ls) => [...ls.slice(-5), line]),
+      system: (line: string, level?: SystemLevel) =>
+        setSystemLines((ls) => [...ls.slice(-5), { text: line, level }]),
       exit: () => {
         setTimeout(() => exit(), 50);
       },
       setFocus,
-      toggleRaw: () => setRawLogs((v) => !v),
+      toggleRaw: () =>
+        setRawLogs((v) => {
+          const next = !v;
+          setSystemLines((ls) => [
+            ...ls.slice(-5),
+            { text: t(next ? 'm.rawOn' : 'm.rawOff'), level: 'info' as SystemLevel },
+          ]);
+          return next;
+        }),
       copyLatest: () => {
         const agents = [...(ctlRef.current?.board.agents.values() ?? [])].filter((a) => a.lastResult);
         const latest = agents.sort((a, b) => b.startedAt - a.startedAt)[0];
         if (!latest?.lastResult) {
-          setSystemLines((ls) => [...ls.slice(-5), 'No completed agent output to copy.']);
+          setSystemLines((ls) => [...ls.slice(-5), { text: t('m.copyNone'), level: 'warn' as SystemLevel }]);
           return;
         }
         const encoded = Buffer.from(latest.lastResult).toString('base64');
         process.stdout.write(`\x1b]52;c;${encoded}\x07`);
-        setSystemLines((ls) => [...ls.slice(-5), `Copied latest result from ${latest.name}.`]);
+        setSystemLines((ls) => [
+          ...ls.slice(-5),
+          { text: t('m.copyDone', { name: latest.name }), level: 'ok' as SystemLevel },
+        ]);
       },
     }),
     [exit],
@@ -236,7 +253,10 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   };
 
   const enterMain = () => {
-    setSystemLines([t('main.ready1', { folder }), t('main.ready2')]);
+    setSystemLines([
+      { text: t('main.ready1', { folder }), level: 'ok' as SystemLevel },
+      { text: t('main.ready2'), level: 'info' as SystemLevel },
+    ]);
     setPhase('main');
     setInputReady(false);
     setTimeout(() => setInputReady(true), 350);
@@ -536,14 +556,14 @@ function MainScreen({
   view: ViewName;
   focus: string | null;
   rawLogs: boolean;
-  systemLines: string[];
+  systemLines: { text: string; level?: SystemLevel }[];
   agentNames: string[];
   approval: Controller['approvals'][number] | undefined;
   question: Controller['questions'][number] | undefined;
   inputActive: boolean;
   onInput: (value: string, images?: string[]) => void;
   onEscape: () => void;
-  notify: (line: string) => void;
+  notify: (line: string, level?: SystemLevel) => void;
 }) {
   const agents = [...ctl.board.agents.values()];
   // Adapt the layout to the REAL terminal size (never resize the user's terminal).
@@ -557,7 +577,17 @@ function MainScreen({
   const footerLine2 = 1; // always shown
   const footerLine1 = agents.length === 0 ? 1 : 0;
   const footerLines = footerLine1 + footerLine2;
-  const systemMsgLines = systemLines.length > 0 && !settingsOpen ? 1 : 0;
+  // System messages: count actual rendered lines (including \n splits + "Session" label).
+  const systemMsgLines =
+    systemLines.length > 0 && !settingsOpen
+      ? (agents.length > 0 ? 1 : 0) + // "Session" label
+        (agents.length > 0
+          ? systemLines
+              .filter((l) => !/^Ready|^Type a task|^⚡ Ready|^Default \/task|^Agent .* launched/.test(l.text))
+              .slice(-2)
+          : systemLines
+        ).reduce((sum, l) => sum + l.text.split('\n').length, 0)
+      : 0;
   const inputLines = 4; // modeHint (1) + input border box (3)
   const spacerLines = 2; // after header + before footer
   const approvalHeight = approval ? 6 : 0;
@@ -646,6 +676,22 @@ function MainScreen({
 
   const folderMax = Math.max(10, cols - 40);
 
+  // View breadcrumb: when not in agents view, show the view name instead of "control room".
+  const VIEW_LABEL: Record<ViewName, string> = {
+    agents: 'control room',
+    board: 'coordination',
+    diff: 'diffs',
+    notes: 'notes',
+    help: 'help',
+    settings: 'settings',
+    'settings-session': 'session settings',
+    sessions: 'sessions',
+    cost: 'cost',
+    skills: 'skills',
+    specialists: 'specialists',
+  };
+  const viewLabel = VIEW_LABEL[view] ?? 'control room';
+
   return (
     <Box flexDirection="column" height={rows}>
       {/* ── Header ── */}
@@ -657,7 +703,8 @@ function MainScreen({
             <Box flexDirection="row">
               <Text bold color={BRAND.primary}>PARALLEL</Text>
               <Text color={globalDotColor}> ●</Text>
-              <Text color={CHROME.muted}> control room</Text>
+              <Text color={view === 'agents' ? CHROME.muted : BRAND.muted}> {viewLabel}</Text>
+              {rawLogs ? <Text color={UI.warn}> [RAW]</Text> : null}
             </Box>
             <Text color={CHROME.muted}>{middleTruncate(folder, folderMax)}</Text>
           </Box>
@@ -730,12 +777,21 @@ function MainScreen({
           {agents.length > 0 ? <Text color={UI.muted} bold>Session</Text> : null}
           {(agents.length > 0
             ? systemLines
-                .filter((l) => !/^Ready|^Type a task|^⚡ Ready|^Default \/task|^Agent .* launched/.test(l))
+                .filter((l) => !/^Ready|^Type a task|^⚡ Ready|^Default \/task|^Agent .* launched/.test(l.text))
                 .slice(-2)
             : systemLines
-          ).map((l, i) => (
-            <Text key={i} color="gray" wrap="truncate-end">{l}</Text>
-          ))}
+          ).flatMap((l, i) => {
+            const levelColor =
+              l.level === 'ok' ? UI.ok :
+              l.level === 'warn' ? UI.warn :
+              l.level === 'error' ? UI.danger :
+              'gray';
+            // Split on \n so multiline i18n messages render correctly (Ink <Text> doesn't interpret \n).
+            const lines = l.text.split('\n');
+            return lines.map((line, j) => (
+              <Text key={`${i}-${j}`} color={levelColor} wrap="truncate-end">{line}</Text>
+            ));
+          })}
         </Box>
       )}
 

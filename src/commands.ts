@@ -16,9 +16,12 @@ export type ViewName =
   | 'skills'
   | 'specialists';
 
+/** Severity level for system messages — maps to terminal colors. */
+export type SystemLevel = 'ok' | 'warn' | 'error' | 'info';
+
 export interface UIActions {
   setView: (v: ViewName) => void;
-  system: (line: string) => void;
+  system: (line: string, level?: SystemLevel) => void;
   exit: () => void;
   /** Focus mode: plain input goes to this agent; null = off. */
   setFocus?: (agentName: string | null) => void;
@@ -337,10 +340,11 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     }
     case '/doctor': {
       const p = ctl.sessionProvider();
-      if (!p) return ui.system(t('m.missingProvider'));
-      if (!p.apiKey) return ui.system(t('m.missingKey', { name: p.name }));
-      if (!ctl.session.model && !p.defaultModel && !p.models[0]) return ui.system(t('m.missingModel', { name: p.name }));
-      ui.system(t('m.doctorOk', { pm: `${p.name}:${ctl.session.model || p.defaultModel || p.models[0]}` }));
+      if (!p) return ui.system(t('m.missingProvider'), 'error');
+      if (!p.apiKey) return ui.system(t('m.missingKey', { name: p.name }), 'error');
+      if (!ctl.session.model && !p.defaultModel && !p.models[0])
+        return ui.system(t('m.missingModel', { name: p.name }), 'error');
+      ui.system(t('m.doctorOk', { pm: `${p.name}:${ctl.session.model || p.defaultModel || p.models[0]}` }), 'ok');
       return;
     }
     case '/cost':
@@ -352,14 +356,15 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       const active = agents.filter((a) => ['working', 'thinking', 'listening', 'waiting'].includes(a.state)).length;
       const cost = agents.reduce((s, a) => s + (a.cost ?? 0), 0);
       const changed = new Set(ctl.board.changes.map((c) => c.path)).size;
-      ui.system(
-        `Status: ${p ? `${p.name}:${ctl.session.model}` : '-'} · approvals ${ctl.session.approvalMode} · agents ${agents.length}/${active} active · changes ${changed} · cost $${cost.toFixed(3)}`,
-      );
+      const pm = p ? `${p.name}:${ctl.session.model}` : '-';
+      // Multiline: each metric on its own line for readability.
+      ui.system(t('m.status', { pm, approval: ctl.session.approvalMode, total: agents.length, active, changed, cost: cost.toFixed(3) }), 'info');
       return;
     }
     case '/raw':
       ui.toggleRaw?.();
-      ui.system('Raw activity toggled for focus view.');
+      // The rawLogs state is toggled by toggleRaw — the caller in App.tsx
+      // provides the current value via a closure; we let App.tsx decide which message.
       return;
     case '/copy':
       ui.copyLatest?.();
@@ -502,14 +507,16 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       return;
     }
     case '/clear': {
+      let cleared = 0;
       for (const [id, a] of [...ctl.board.agents.entries()]) {
         if (['done', 'stopped', 'error'].includes(a.state)) {
           ctl.board.agents.delete(id);
           ctl.agents.delete(id);
+          cleared++;
         }
       }
       ctl.emit('update');
-      ui.system(t('m.cleared'));
+      ui.system(cleared > 0 ? t('m.clearedN', { n: cleared }) : t('m.clearedNone'), 'ok');
       return;
     }
     case '/help':
