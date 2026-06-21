@@ -12,6 +12,9 @@ dist/
 # Session data (local)
 .parallel/
 
+# Tests (local only, not pushed)
+test/
+
 # OS files
 .DS_Store
 Thumbs.db
