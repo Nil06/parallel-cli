@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Box, Text, useApp, useInput, useStdin, useStdout } from 'ink';
+import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { Controller } from '../controller.js';
 import { startSessionServer } from '../server.js';
 import { executeInput, type ViewName, type UIActions } from '../commands.js';
 import { PROVIDER_PRESETS, getProvider, rememberFolder, saveConfig } from '../config.js';
-import { fmtCost } from '../pricing.js';
 import { LANGS, setLang, t } from '../i18n.js';
 import type { Lang, ParallelConfig, ProviderConfig, SessionData } from '../types.js';
 import { AgentRow, AgentTranscript } from './AgentPanel.js';
@@ -16,7 +15,7 @@ import { CommandInput } from './CommandInput.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { BoardView, CostView, DiffView, HelpView, NotesView, SessionsView, SkillsView, SpecialistsView } from './views.js';
 import { SelectList, WizardStep, type SelectItem } from './Wizard.js';
-import { ASCII_LOGO, BRAND, CHROME, STATE, STATE_META, UI, middleTruncate } from './tokens.js';
+import { BRAND, CHROME, STATE, STATE_META, UI, middleTruncate } from './tokens.js';
 import type { AgentInfo } from '../types.js';
 
 const LOGO = 'Parallel';
@@ -551,11 +550,10 @@ function MainScreen({
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 100;
   const rows = stdout?.rows ?? 30;
-  const narrow = cols < 90;
   const settingsOpen = view === 'settings' || view === 'settings-session';
 
   // Height budget: fixed sections → body gets the remainder.
-  const headerLines = agents.length > 0 ? 2 : 1;
+  const headerLines = 4; // border-box header (top border + 2 content lines + bottom border)
   const footerLine2 = 1; // always shown
   const footerLine1 = agents.length === 0 ? 1 : 0;
   const footerLines = footerLine1 + footerLine2;
@@ -636,44 +634,8 @@ function MainScreen({
       if (key.pageUp || key.upArrow) scrollHubUp();
       if (key.pageDown || key.downArrow) scrollHubDown();
     }
-  });
+  }, { isActive: !inputActive });
 
-  // SGR mouse wheel: when the terminal sends raw mouse events (enabled at
-  // startup via \x1b[?1000h\x1b[?1006h), parse wheel-up (button 64) and
-  // wheel-down (button 65) to scroll the hub or focused agent.
-  const { stdin } = useStdin();
-  useEffect(() => {
-    let buf = '';
-    const onData = (chunk: Buffer | string) => {
-      buf += typeof chunk === 'string' ? chunk : chunk.toString();
-      // SGR mouse event: \x1b[<button;x;y[Mm]
-      // Wheel-up   = button 64 (or 96 for shift+wheel)
-      // Wheel-down = button 65 (or 97 for shift+wheel)
-      const re = /\x1b\[<(\d+);\d+;\d+[Mm]/g;
-      let match: RegExpExecArray | null;
-      while ((match = re.exec(buf)) !== null) {
-        const btn = parseInt(match[1], 10);
-        const wheelDir = (btn & 0x3f); // strip modifier bits
-        if (wheelDir === 64) {
-          // wheel up → scroll towards older items
-          if (focused) scrollFocusUp();
-          else if (view === 'agents') scrollHubUp();
-        } else if (wheelDir === 65) {
-          // wheel down → scroll towards latest
-          if (focused) scrollFocusDown();
-          else if (view === 'agents') scrollHubDown();
-        }
-      }
-      // Keep only the last 64 bytes to avoid unbounded growth.
-      if (buf.length > 64) buf = buf.slice(-64);
-    };
-    stdin.on('data', onData);
-    return () => {
-      stdin.off('data', onData);
-    };
-  }, [stdin, focused, view, maxScroll, maxHubScroll]);
-
-  const totalCost = agents.reduce((s, a) => s + (a.cost ?? 0), 0);
   const idleCount = agents.filter((a) => a.state === 'idle').length;
   const workingCount = agents.filter((a) => ['working', 'thinking', 'listening'].includes(a.state)).length;
   const doneCount = agents.filter((a) => a.state === 'done').length;
@@ -682,31 +644,47 @@ function MainScreen({
     : agents.some((a) => ['waiting', 'paused'].includes(a.state)) ? 'yellow'
     : 'gray';
 
+  const folderMax = Math.max(10, cols - 40);
+
   return (
     <Box flexDirection="column" height={rows}>
       {/* ── Header ── */}
-      <Box flexDirection="row" justifyContent="space-between">
-        <Box flexDirection="row">
-          <Text bold color={BRAND.primary}>{ASCII_LOGO}</Text>
-          <Text color={globalDotColor}> ●</Text>
-          <Text color={CHROME.muted}> control room</Text>
+      <Box flexDirection="column">
+        <Text color={CHROME.muted}>╭{'─'.repeat(cols - 2)}╮</Text>
+        <Box flexDirection="row" width={cols}>
+          <Text color={CHROME.muted}>│ </Text>
+          <Box flexDirection="row" width={cols - 4} justifyContent="space-between">
+            <Box flexDirection="row">
+              <Text bold color={BRAND.primary}>PARALLEL</Text>
+              <Text color={globalDotColor}> ●</Text>
+              <Text color={CHROME.muted}> control room</Text>
+            </Box>
+            <Text color={CHROME.muted}>{middleTruncate(folder, folderMax)}</Text>
+          </Box>
+          <Text color={CHROME.muted}> │</Text>
         </Box>
-        <Text color={CHROME.muted}>{middleTruncate(folder, cols < 90 ? 15 : 30)} · v{VERSION}</Text>
+        <Box flexDirection="row" width={cols}>
+          <Text color={CHROME.muted}>│ </Text>
+          <Box flexDirection="row" width={cols - 4} justifyContent={agents.length > 0 ? 'space-between' : 'flex-end'}>
+            {agents.length > 0 ? (
+              <Box flexDirection="row">
+                <Text>
+                  <Text color={CHROME.muted}>◇ {idleCount} idle</Text>
+                  {' · '}
+                  <Text color={workingCount > 0 ? STATE.working : CHROME.muted}>● {workingCount} active</Text>
+                  {' · '}
+                  <Text color={doneCount > 0 ? STATE.done : CHROME.muted}>✓ {doneCount} done</Text>
+                  {' · '}
+                  <Text color={errorCount > 0 ? STATE.error : CHROME.muted}>✗ {errorCount} err</Text>
+                </Text>
+              </Box>
+            ) : null}
+            <Text color={CHROME.muted}>v{VERSION}</Text>
+          </Box>
+          <Text color={CHROME.muted}> │</Text>
+        </Box>
+        <Text color={CHROME.muted}>╰{'─'.repeat(cols - 2)}╯</Text>
       </Box>
-      {agents.length > 0 ? (
-        <Box flexDirection="row" justifyContent="space-between">
-          <Text>
-            <Text color={CHROME.muted}>◇ {idleCount} idle</Text>
-            {' · '}
-            <Text color={workingCount > 0 ? STATE.working : CHROME.muted}>● {workingCount} active</Text>
-            {' · '}
-            <Text color={doneCount > 0 ? STATE.done : CHROME.muted}>✓ {doneCount} done</Text>
-            {' · '}
-            <Text color={errorCount > 0 ? STATE.error : CHROME.muted}>✗ {errorCount} err</Text>
-          </Text>
-          <Text color={CHROME.muted}>{fmtCost(totalCost)}</Text>
-        </Box>
-      ) : null}
 
       <Text> </Text>
 
