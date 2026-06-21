@@ -46,9 +46,9 @@ export const COMMANDS: CommandDef[] = [
   { name: '/plan', args: '[Name:] <task> [--model=m]', descKey: 'cmd.plan', group: 'modes', aliases: ['/p'] },
   { name: '/issue', args: '<n>', descKey: 'cmd.issue', group: 'git' },
   { name: '/specialist', args: '<name> <task> | new <name> [global]', descKey: 'cmd.specialist', group: 'modes' },
-  { name: '/specialists', args: '', descKey: 'cmd.specialists', group: 'settings' },
+  { name: '/specialists', args: '', descKey: 'cmd.specialists', group: 'views' },
   { name: '/skill', args: 'new <name> [global]', descKey: 'cmd.skill', group: 'settings' },
-  { name: '/skills', args: '', descKey: 'cmd.skills', group: 'settings' },
+  { name: '/skills', args: '', descKey: 'cmd.skills', group: 'views' },
   // steer agents
   { name: '/send', args: '<agent|all> <message>', descKey: 'cmd.send', group: 'control' },
   { name: '/attach', args: '<agent|on|off>', descKey: 'cmd.attach', group: 'control' },
@@ -57,6 +57,8 @@ export const COMMANDS: CommandDef[] = [
   { name: '/resume', args: '<agent|all>', descKey: 'cmd.resume', group: 'control' },
   { name: '/stop', args: '<agent|all>', descKey: 'cmd.stop', group: 'control' },
   { name: '/clear', args: '', descKey: 'cmd.clear', group: 'control' },
+  { name: '/raw', args: '', descKey: 'cmd.raw', group: 'control' },
+  { name: '/copy', args: '', descKey: 'cmd.copy', group: 'control' },
   // git safety net
   { name: '/undo', args: '[agent]', descKey: 'cmd.undo', group: 'git' },
   { name: '/commit', args: '[agent|all] [message]', descKey: 'cmd.commit', group: 'git' },
@@ -68,8 +70,6 @@ export const COMMANDS: CommandDef[] = [
   { name: '/diff', args: '', descKey: 'cmd.diff', group: 'views' },
   { name: '/cost', args: '', descKey: 'cmd.cost', group: 'views' },
   { name: '/status', args: '', descKey: 'cmd.status', group: 'views' },
-  { name: '/raw', args: '', descKey: 'cmd.raw', group: 'views' },
-  { name: '/copy', args: '', descKey: 'cmd.copy', group: 'views' },
   // sessions
   { name: '/save', args: '[name]', descKey: 'cmd.save', group: 'git' },
   { name: '/sessions', args: '', descKey: 'cmd.sessions', group: 'git' },
@@ -196,7 +196,11 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
         ? '/task'
         : rawCmd.toLowerCase() === '/p'
           ? '/plan'
-          : rawCmd;
+          : rawCmd.toLowerCase() === '/ssettings'
+            ? '/settings-session'
+            : rawCmd.toLowerCase() === '/exit'
+              ? '/quit'
+              : rawCmd;
   const arg = rest.join(' ').trim();
 
   switch (cmd.toLowerCase()) {
@@ -469,7 +473,6 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       ui.setView('settings');
       return;
     case '/settings-session':
-    case '/ssettings':
       ui.setView('settings-session');
       return;
     // SESSION-only approvals & sound (global defaults editable in /settings).
@@ -513,7 +516,6 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       ui.setView('help');
       return;
     case '/quit':
-    case '/exit':
       ctl.saveSession();
       ctl.stopAll();
       ui.exit();
