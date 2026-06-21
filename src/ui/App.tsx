@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Box, Text, useApp, useInput, useStdout } from 'ink';
+import { Box, Text, useApp, useInput, useStdin, useStdout } from 'ink';
 import { Controller } from '../controller.js';
 import { startSessionServer } from '../server.js';
 import { executeInput, type ViewName, type UIActions } from '../commands.js';
@@ -16,7 +16,7 @@ import { CommandInput } from './CommandInput.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { BoardView, CostView, DiffView, HelpView, NotesView, SessionsView, SkillsView, SpecialistsView } from './views.js';
 import { SelectList, WizardStep, type SelectItem } from './Wizard.js';
-import { ASCII_LOGO, ASCII_LOGO_FALLBACK, BRAND, CHROME, LOGO_MIN_COLS, STATE, STATE_META, UI, middleTruncate } from './tokens.js';
+import { ASCII_LOGO, BRAND, CHROME, STATE, STATE_META, UI, middleTruncate } from './tokens.js';
 import type { AgentInfo } from '../types.js';
 
 const LOGO = 'Parallel';
@@ -555,8 +555,7 @@ function MainScreen({
   const settingsOpen = view === 'settings' || view === 'settings-session';
 
   // Height budget: fixed sections → body gets the remainder.
-  const wideHeader = cols >= LOGO_MIN_COLS;
-  const headerLines = wideHeader ? (agents.length > 0 ? 3 : 2) : 2;
+  const headerLines = agents.length > 0 ? 2 : 1;
   const footerLine2 = 1; // always shown
   const footerLine1 = agents.length === 0 ? 1 : 0;
   const footerLines = footerLine1 + footerLine2;
@@ -601,35 +600,78 @@ function MainScreen({
     if (hubFollowTail) setHubScroll(0);
   }, [logSeq, agents.length, hubFollowTail]);
 
-  // Esc always returns to the agents view, even while approval is shown.
+  // Scroll helpers (also used by mouse wheel handler below).
+  const scrollFocusUp = () => {
+    setFocusFollowTail(false);
+    setScroll((s) => Math.min(s + 1, maxScroll));
+  };
+  const scrollFocusDown = () => {
+    setScroll((s) => {
+      const next = Math.max(0, s - 1);
+      if (next === 0) setFocusFollowTail(true);
+      return next;
+    });
+  };
+  const scrollHubUp = () => {
+    setHubFollowTail(false);
+    setHubScroll((s) => Math.min(Math.min(s, maxHubScroll) + 1, maxHubScroll));
+  };
+  const scrollHubDown = () => {
+    setHubScroll((s) => {
+      const next = Math.max(0, Math.min(s, maxHubScroll) - 1);
+      if (next === 0) setHubFollowTail(true);
+      return next;
+    });
+  };
+
+  // Keyboard: Esc / PgUp-PgDn / Up-Down arrows.
+  // When CommandInput is NOT focused, Up/Down scroll the hub or focused agent;
+  // when it IS focused, CommandInput's own useInput sees them first (history nav).
   useInput((_input, key) => {
     if (key.escape) onEscape();
     if (focused) {
-      if (key.pageUp) {
-        setFocusFollowTail(false);
-        setScroll((s) => Math.min(s + 10, maxScroll));
-      }
-      if (key.pageDown) {
-        setScroll((s) => {
-          const next = Math.max(0, s - 10);
-          if (next === 0) setFocusFollowTail(true);
-          return next;
-        });
-      }
+      if (key.pageUp || key.upArrow) scrollFocusUp();
+      if (key.pageDown || key.downArrow) scrollFocusDown();
     } else if (view === 'agents') {
-      if (key.pageUp) {
-        setHubFollowTail(false);
-        setHubScroll((s) => Math.min(Math.min(s, maxHubScroll) + 1, maxHubScroll));
-      }
-      if (key.pageDown) {
-        setHubScroll((s) => {
-          const next = Math.max(0, Math.min(s, maxHubScroll) - 1);
-          if (next === 0) setHubFollowTail(true);
-          return next;
-        });
-      }
+      if (key.pageUp || key.upArrow) scrollHubUp();
+      if (key.pageDown || key.downArrow) scrollHubDown();
     }
   });
+
+  // SGR mouse wheel: when the terminal sends raw mouse events (enabled at
+  // startup via \x1b[?1000h\x1b[?1006h), parse wheel-up (button 64) and
+  // wheel-down (button 65) to scroll the hub or focused agent.
+  const { stdin } = useStdin();
+  useEffect(() => {
+    let buf = '';
+    const onData = (chunk: Buffer | string) => {
+      buf += typeof chunk === 'string' ? chunk : chunk.toString();
+      // SGR mouse event: \x1b[<button;x;y[Mm]
+      // Wheel-up   = button 64 (or 96 for shift+wheel)
+      // Wheel-down = button 65 (or 97 for shift+wheel)
+      const re = /\x1b\[<(\d+);\d+;\d+[Mm]/g;
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(buf)) !== null) {
+        const btn = parseInt(match[1], 10);
+        const wheelDir = (btn & 0x3f); // strip modifier bits
+        if (wheelDir === 64) {
+          // wheel up → scroll towards older items
+          if (focused) scrollFocusUp();
+          else if (view === 'agents') scrollHubUp();
+        } else if (wheelDir === 65) {
+          // wheel down → scroll towards latest
+          if (focused) scrollFocusDown();
+          else if (view === 'agents') scrollHubDown();
+        }
+      }
+      // Keep only the last 64 bytes to avoid unbounded growth.
+      if (buf.length > 64) buf = buf.slice(-64);
+    };
+    stdin.on('data', onData);
+    return () => {
+      stdin.off('data', onData);
+    };
+  }, [stdin, focused, view, maxScroll, maxHubScroll]);
 
   const totalCost = agents.reduce((s, a) => s + (a.cost ?? 0), 0);
   const idleCount = agents.filter((a) => a.state === 'idle').length;
@@ -641,67 +683,30 @@ function MainScreen({
     : 'gray';
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={rows}>
       {/* ── Header ── */}
-      {cols >= LOGO_MIN_COLS ? (
-        <>
-          <Box flexDirection="row" justifyContent="space-between">
-            <Text color={BRAND.primary}>{ASCII_LOGO[0]}</Text>
-            <Text color={CHROME.muted}>{middleTruncate(folder, 30)}</Text>
-          </Box>
-          <Box flexDirection="row" justifyContent="space-between">
-            <Box flexDirection="row">
-              <Text color={BRAND.primary}>{ASCII_LOGO[1]}</Text>
-              <Text color={globalDotColor}> ●</Text>
-              <Text color={CHROME.muted}> control room</Text>
-            </Box>
-            <Text color={CHROME.muted}>v{VERSION}</Text>
-          </Box>
-          {agents.length > 0 ? (
-            <Box flexDirection="row" justifyContent="space-between">
-              <Text>
-                <Text color={CHROME.muted}>◇ {idleCount} idle</Text>
-                {' · '}
-                <Text color={workingCount > 0 ? STATE.working : CHROME.muted}>● {workingCount} active</Text>
-                {' · '}
-                <Text color={doneCount > 0 ? STATE.done : CHROME.muted}>✓ {doneCount} done</Text>
-                {' · '}
-                <Text color={errorCount > 0 ? STATE.error : CHROME.muted}>✗ {errorCount} err</Text>
-              </Text>
-              <Text color={CHROME.muted}>{fmtCost(totalCost)}</Text>
-            </Box>
-          ) : null}
-        </>
-      ) : (
-        <>
-          <Box flexDirection="row" justifyContent="space-between">
-            <Box flexDirection="row">
-              <Text bold color={BRAND.primary}>{ASCII_LOGO_FALLBACK}</Text>
-              <Text color={globalDotColor}> ●</Text>
-              <Text color={CHROME.muted}> control room</Text>
-            </Box>
-            <Text color={CHROME.muted}>{middleTruncate(folder, 15)}</Text>
-          </Box>
-          {agents.length > 0 ? (
-            <Box flexDirection="row" justifyContent="space-between">
-              <Text>
-                <Text color={CHROME.muted}>◇{idleCount}</Text>
-                {' · '}
-                <Text color={workingCount > 0 ? STATE.working : CHROME.muted}>●{workingCount}</Text>
-                {' · '}
-                <Text color={doneCount > 0 ? STATE.done : CHROME.muted}>✓{doneCount}</Text>
-                {' · '}
-                <Text color={errorCount > 0 ? STATE.error : CHROME.muted}>✗{errorCount}</Text>
-              </Text>
-              <Text color={CHROME.muted}>v{VERSION} · {fmtCost(totalCost)}</Text>
-            </Box>
-          ) : (
-            <Box flexDirection="row" justifyContent="flex-end">
-              <Text color={CHROME.muted}>{middleTruncate(folder, 15)} · v{VERSION}</Text>
-            </Box>
-          )}
-        </>
-      )}
+      <Box flexDirection="row" justifyContent="space-between">
+        <Box flexDirection="row">
+          <Text bold color={BRAND.primary}>{ASCII_LOGO}</Text>
+          <Text color={globalDotColor}> ●</Text>
+          <Text color={CHROME.muted}> control room</Text>
+        </Box>
+        <Text color={CHROME.muted}>{middleTruncate(folder, cols < 90 ? 15 : 30)} · v{VERSION}</Text>
+      </Box>
+      {agents.length > 0 ? (
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text>
+            <Text color={CHROME.muted}>◇ {idleCount} idle</Text>
+            {' · '}
+            <Text color={workingCount > 0 ? STATE.working : CHROME.muted}>● {workingCount} active</Text>
+            {' · '}
+            <Text color={doneCount > 0 ? STATE.done : CHROME.muted}>✓ {doneCount} done</Text>
+            {' · '}
+            <Text color={errorCount > 0 ? STATE.error : CHROME.muted}>✗ {errorCount} err</Text>
+          </Text>
+          <Text color={CHROME.muted}>{fmtCost(totalCost)}</Text>
+        </Box>
+      ) : null}
 
       <Text> </Text>
 

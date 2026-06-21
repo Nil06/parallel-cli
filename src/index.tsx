@@ -175,11 +175,14 @@ const initialFolder = argv.find((a) => !a.startsWith('-'));
 const useAltScreen = process.stdout.isTTY && process.env.PARALLEL_NO_ALT_SCREEN !== '1';
 const restoreTerminal = () => {
   if (!useAltScreen) return;
-  process.stdout.write('\x1b[?25h\x1b[?1049l');
+  // Disable SGR mouse tracking + show cursor + leave alternate screen.
+  process.stdout.write('\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l');
 };
 
 if (useAltScreen) {
-  process.stdout.write('\x1b[?1049h\x1b[2J\x1b[3J\x1b[H');
+  // Alternate screen + clear + enable SGR extended mouse tracking so the
+  // terminal sends raw mouse events instead of translating wheel to arrow keys.
+  process.stdout.write('\x1b[?1049h\x1b[2J\x1b[3J\x1b[H\x1b[?1000h\x1b[?1006h');
   process.once('exit', restoreTerminal);
   process.once('SIGINT', () => {
     restoreTerminal();
