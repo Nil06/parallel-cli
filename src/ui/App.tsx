@@ -556,6 +556,7 @@ function MainScreen({
     ? agents.find((a) => a.name.toLowerCase() === focus.toLowerCase())
     : undefined;
   const [scroll, setScroll] = useState(0);
+  const [focusFollowTail, setFocusFollowTail] = useState(true);
   useEffect(() => setScroll(0), [focus]);
   const FOCUS_LOGS = Math.max(8, rows - 13);
   const focusedLogs = focused ? ctl.board.logs.filter((l) => l.agentId === focused.id) : [];
@@ -569,19 +570,45 @@ function MainScreen({
     : [];
 
   const [hubScroll, setHubScroll] = useState(0);
-  const hubRows = Math.max(8, rows - 12);
+  const [hubFollowTail, setHubFollowTail] = useState(true);
+  const hubRows = Math.max(6, Math.floor((rows - 14) / 4));
   const maxHubScroll = Math.max(0, agents.length - hubRows);
   const clampedHub = Math.min(hubScroll, maxHubScroll);
+  const logSeq = ctl.board.logs.length > 0 ? ctl.board.logs[ctl.board.logs.length - 1].seq ?? ctl.board.logs.length : 0;
+  useEffect(() => {
+    if (focusFollowTail) setScroll(0);
+  }, [logSeq, focused?.state, focusFollowTail]);
+  useEffect(() => {
+    if (hubFollowTail) setHubScroll(0);
+  }, [logSeq, agents.length, hubFollowTail]);
 
   // Esc always returns to the agents view, even while approval is shown.
   useInput((_input, key) => {
     if (key.escape) onEscape();
     if (focused) {
-      if (key.pageUp) setScroll((s) => Math.min(s + 10, maxScroll));
-      if (key.pageDown) setScroll((s) => Math.max(0, s - 10));
+      if (key.pageUp) {
+        setFocusFollowTail(false);
+        setScroll((s) => Math.min(s + 10, maxScroll));
+      }
+      if (key.pageDown) {
+        setScroll((s) => {
+          const next = Math.max(0, s - 10);
+          if (next === 0) setFocusFollowTail(true);
+          return next;
+        });
+      }
     } else if (view === 'agents') {
-      if (key.pageUp) setHubScroll((s) => Math.max(0, Math.min(s, maxHubScroll) - 5));
-      if (key.pageDown) setHubScroll((s) => Math.min(Math.min(s, maxHubScroll) + 5, maxHubScroll));
+      if (key.pageUp) {
+        setHubFollowTail(false);
+        setHubScroll((s) => Math.min(Math.min(s, maxHubScroll) + 1, maxHubScroll));
+      }
+      if (key.pageDown) {
+        setHubScroll((s) => {
+          const next = Math.max(0, Math.min(s, maxHubScroll) - 1);
+          if (next === 0) setHubFollowTail(true);
+          return next;
+        });
+      }
     }
   });
 
@@ -596,29 +623,22 @@ function MainScreen({
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
-        <Text bold color={UI.brand}>
-          {LOGO}
-          <Text color={UI.muted}> control room</Text>
-        </Text>
-        <Text color="gray">
-          {p ? `${p.name}:${middleTruncate(ctl.session.model, narrow ? 18 : 30)}` : '-'} · {ctl.session.approvalMode} ·{' '}
-          {activeCount} active · {fmtCost(totalCost)}
-        </Text>
+        <Text bold color={UI.brand}>{LOGO}</Text>
+        <Text color={UI.muted}>{p ? `${p.name}:${middleTruncate(ctl.session.model, narrow ? 18 : 34)}` : '-'}</Text>
       </Box>
-      <Text color="gray" wrap="truncate-end">
-        {middleTruncate(folder, cols - 2)}
+      <Box justifyContent="space-between">
+        <Text color={UI.muted} wrap="truncate-end">{middleTruncate(folder, Math.max(20, cols - 34))}</Text>
+        <Text color={UI.muted}>Shell {ctl.session.approvalMode} · {fmtCost(totalCost)}</Text>
+      </Box>
+      <Text color={UI.muted} wrap="truncate-end">
+        <Text color={needsInput > 0 ? UI.warn : UI.muted}>Needs input {needsInput}</Text>
+        {'   '}
+        <Text color={activeCount > 0 ? UI.accent : UI.muted}>Working {activeCount}</Text>
+        {'   '}
+        <Text color={completedCount > 0 ? UI.ok : UI.muted}>Completed {completedCount}</Text>
+        {'   '}
+        <Text>Agents {agents.length}</Text>
       </Text>
-      {agents.length > 0 ? (
-        <Text color={UI.muted} wrap="truncate-end">
-          <Text color={needsInput > 0 ? UI.warn : UI.muted}>Needs input {needsInput}</Text>
-          {'  '}
-          <Text color={activeCount > 0 ? UI.accent : UI.muted}>Working {activeCount}</Text>
-          {'  '}
-          <Text color={completedCount > 0 ? UI.ok : UI.muted}>Completed {completedCount}</Text>
-          {'  '}
-          <Text>Agents {agents.length}</Text>
-        </Text>
-      ) : null}
 
       {/* body */}
       {view === 'settings' ? (
@@ -648,6 +668,7 @@ function MainScreen({
       ) : focused ? (
         <Box flexDirection="column">
           <AgentTranscript agent={focused} logs={visibleLogs} raw={rawLogs} scrolled={clampedScroll} />
+          {!focusFollowTail ? <Text color={UI.warn}>Viewing older · PgDn to latest</Text> : null}
         </Box>
       ) : (
         <AgentHub agents={agents} ctl={ctl} cols={cols} scroll={clampedHub} visibleRows={hubRows} />
@@ -656,10 +677,12 @@ function MainScreen({
       {/* system messages */}
       {systemLines.length > 0 && !settingsOpen && (
         <Box flexDirection="column">
-          {systemLines.map((l, i) => (
-            <Text key={i} color="gray" wrap="truncate-end">
-              {l}
-            </Text>
+          {agents.length > 0 ? <Text color={UI.muted} bold>Recent</Text> : null}
+          {(agents.length > 0
+            ? systemLines.filter((l) => !/^Ready|^Type a task|^⚡ Ready/.test(l)).slice(-3)
+            : systemLines
+          ).map((l, i) => (
+            <Text key={i} color="gray" wrap="truncate-end">{l}</Text>
           ))}
         </Box>
       )}
@@ -686,8 +709,9 @@ function MainScreen({
       {/* input */}
       <CommandInput
         active={inputActive}
-        placeholder={focus ? `Message ${focus} or /command` : 'Ask Parallel or / for commands'}
+        placeholder={focus ? `Message ${focus} or /command` : 'Task mode: describe work to run · /ask question · /plan proposal · / for commands'}
         agentNames={agentNames}
+        agents={agents}
         onSubmit={onInput}
         onEscape={onEscape}
         notify={notify}
@@ -765,9 +789,9 @@ function AgentHub({
   const below = Math.max(0, agents.length - scroll - rendered);
   return (
     <Box flexDirection="column">
-      {scroll > 0 ? <Text color={UI.muted}>▲ {scroll} older · PgUp</Text> : null}
+      {scroll > 0 ? <Text color={UI.muted}>▲ {scroll} older · PgDn to latest</Text> : null}
       {rows}
-      {below > 0 ? <Text color={UI.muted}>▼ {below} more · PgDn</Text> : null}
+      {below > 0 ? <Text color={UI.muted}>▼ {below} more · PgUp</Text> : null}
     </Box>
   );
 }

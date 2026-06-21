@@ -1,6 +1,7 @@
-import { Controller } from './controller.js';
+import { Controller, normalizeShellApprovalMode } from './controller.js';
 import { createSkillTemplate, createSpecialistTemplate } from './skills.js';
 import { t } from './i18n.js';
+import type { AgentMode } from './types.js';
 
 export type ViewName =
   | 'agents'
@@ -29,6 +30,8 @@ export interface CommandDef {
   name: string;
   args: string;
   descKey: string;
+  group?: 'modes' | 'control' | 'views' | 'settings' | 'git' | 'other';
+  hidden?: boolean;
   /** Alternative spellings — accepted and autocompleted, shown in /help. */
   aliases?: string[];
 }
@@ -37,56 +40,62 @@ export interface CommandDef {
 // inspect the session → git safety net → session & config → exit.
 export const COMMANDS: CommandDef[] = [
   // create agents
-  { name: '/spawn', args: '[Name:] <task> [--model=m] [#skill]', descKey: 'cmd.spawn' },
-  { name: '/plan', args: '[Name:] <task> [--model=m]', descKey: 'cmd.plan' },
-  { name: '/issue', args: '<n>', descKey: 'cmd.issue' },
-  { name: '/specialist', args: '<name> <task> | new <name> [global]', descKey: 'cmd.specialist' },
-  { name: '/specialists', args: '', descKey: 'cmd.specialists' },
-  { name: '/skill', args: 'new <name> [global]', descKey: 'cmd.skill' },
-  { name: '/skills', args: '', descKey: 'cmd.skills' },
+  { name: '/ask', args: '[Name:] <question> [--model=m]', descKey: 'cmd.ask', group: 'modes', aliases: ['/a'] },
+  { name: '/task', args: '[Name:] <task> [--model=m] [#skill]', descKey: 'cmd.task', group: 'modes', aliases: ['/t'] },
+  { name: '/spawn', args: '[Name:] <task> [--model=m] [#skill]', descKey: 'cmd.spawn', group: 'modes', hidden: true },
+  { name: '/plan', args: '[Name:] <task> [--model=m]', descKey: 'cmd.plan', group: 'modes', aliases: ['/p'] },
+  { name: '/issue', args: '<n>', descKey: 'cmd.issue', group: 'git' },
+  { name: '/specialist', args: '<name> <task> | new <name> [global]', descKey: 'cmd.specialist', group: 'modes' },
+  { name: '/specialists', args: '', descKey: 'cmd.specialists', group: 'settings' },
+  { name: '/skill', args: 'new <name> [global]', descKey: 'cmd.skill', group: 'settings' },
+  { name: '/skills', args: '', descKey: 'cmd.skills', group: 'settings' },
   // steer agents
-  { name: '/send', args: '<agent|all> <message>', descKey: 'cmd.send' },
-  { name: '/attach', args: '<agent|on|off>', descKey: 'cmd.attach' },
-  { name: '/focus', args: '<agent|off>', descKey: 'cmd.focus' },
-  { name: '/pause', args: '<agent|all>', descKey: 'cmd.pause' },
-  { name: '/resume', args: '<agent|all>', descKey: 'cmd.resume' },
-  { name: '/stop', args: '<agent|all>', descKey: 'cmd.stop' },
-  { name: '/clear', args: '', descKey: 'cmd.clear' },
+  { name: '/send', args: '<agent|all> <message>', descKey: 'cmd.send', group: 'control' },
+  { name: '/attach', args: '<agent|on|off>', descKey: 'cmd.attach', group: 'control' },
+  { name: '/focus', args: '<agent|off>', descKey: 'cmd.focus', group: 'control' },
+  { name: '/pause', args: '<agent|all>', descKey: 'cmd.pause', group: 'control' },
+  { name: '/resume', args: '<agent|all>', descKey: 'cmd.resume', group: 'control' },
+  { name: '/stop', args: '<agent|all>', descKey: 'cmd.stop', group: 'control' },
+  { name: '/clear', args: '', descKey: 'cmd.clear', group: 'control' },
   // git safety net
-  { name: '/undo', args: '[agent]', descKey: 'cmd.undo' },
-  { name: '/commit', args: '[agent|all] [message]', descKey: 'cmd.commit' },
-  { name: '/autocommit', args: '<on|off>', descKey: 'cmd.autocommit' },
+  { name: '/undo', args: '[agent]', descKey: 'cmd.undo', group: 'git' },
+  { name: '/commit', args: '[agent|all] [message]', descKey: 'cmd.commit', group: 'git' },
+  { name: '/autocommit', args: '<on|off>', descKey: 'cmd.autocommit', group: 'git' },
   // inspect the session
-  { name: '/agents', args: '', descKey: 'cmd.agents' },
-  { name: '/board', args: '', descKey: 'cmd.board' },
-  { name: '/notes', args: '', descKey: 'cmd.notes' },
-  { name: '/diff', args: '', descKey: 'cmd.diff' },
-  { name: '/cost', args: '', descKey: 'cmd.cost' },
-  { name: '/status', args: '', descKey: 'cmd.status' },
-  { name: '/raw', args: '', descKey: 'cmd.raw' },
-  { name: '/copy', args: '', descKey: 'cmd.copy' },
+  { name: '/agents', args: '', descKey: 'cmd.agents', group: 'views' },
+  { name: '/board', args: '', descKey: 'cmd.board', group: 'views' },
+  { name: '/notes', args: '', descKey: 'cmd.notes', group: 'views' },
+  { name: '/diff', args: '', descKey: 'cmd.diff', group: 'views' },
+  { name: '/cost', args: '', descKey: 'cmd.cost', group: 'views' },
+  { name: '/status', args: '', descKey: 'cmd.status', group: 'views' },
+  { name: '/raw', args: '', descKey: 'cmd.raw', group: 'views' },
+  { name: '/copy', args: '', descKey: 'cmd.copy', group: 'views' },
   // sessions
-  { name: '/save', args: '[name]', descKey: 'cmd.save' },
-  { name: '/sessions', args: '', descKey: 'cmd.sessions' },
-  { name: '/session', args: '[n|latest]', descKey: 'cmd.session' },
-  { name: '/restore', args: '<agent>', descKey: 'cmd.restore' },
+  { name: '/save', args: '[name]', descKey: 'cmd.save', group: 'git' },
+  { name: '/sessions', args: '', descKey: 'cmd.sessions', group: 'git' },
+  { name: '/session', args: '[n|latest]', descKey: 'cmd.session', group: 'git' },
+  { name: '/restore', args: '<agent>', descKey: 'cmd.restore', group: 'git' },
   // config
-  { name: '/model', args: '[[provider:]model]', descKey: 'cmd.model' },
-  { name: '/key', args: '<key>', descKey: 'cmd.key' },
-  { name: '/approvals', args: '<ask|auto>', descKey: 'cmd.approvals' },
-  { name: '/sound', args: '<on|off>', descKey: 'cmd.sound' },
-  { name: '/settings', args: '', descKey: 'cmd.settings' },
-  { name: '/settings-session', args: '', descKey: 'cmd.ssettings', aliases: ['/ssettings'] },
-  { name: '/doctor', args: '', descKey: 'cmd.doctor' },
+  { name: '/model', args: '[[provider:]model]', descKey: 'cmd.model', group: 'settings' },
+  { name: '/key', args: '<key>', descKey: 'cmd.key', group: 'settings' },
+  { name: '/approvals', args: '<ask|auto|auto-safe|yolo>', descKey: 'cmd.approvals', group: 'settings' },
+  { name: '/sound', args: '<on|off>', descKey: 'cmd.sound', group: 'settings' },
+  { name: '/settings', args: '', descKey: 'cmd.settings', group: 'settings' },
+  { name: '/settings-session', args: '', descKey: 'cmd.ssettings', group: 'settings', aliases: ['/ssettings'] },
+  { name: '/doctor', args: '', descKey: 'cmd.doctor', group: 'settings' },
   // exit
-  { name: '/help', args: '', descKey: 'cmd.help' },
-  { name: '/quit', args: '', descKey: 'cmd.quit', aliases: ['/exit'] },
+  { name: '/help', args: '', descKey: 'cmd.help', group: 'other' },
+  { name: '/quit', args: '', descKey: 'cmd.quit', group: 'other', aliases: ['/exit'] },
 ];
 
-export function matchCommands(input: string): CommandDef[] {
+export function visibleCommands(): CommandDef[] {
+  return COMMANDS.filter((c) => !c.hidden);
+}
+
+export function matchCommands(input: string, opts: { includeHidden?: boolean } = {}): CommandDef[] {
   if (!input.startsWith('/')) return [];
   const word = input.split(/\s+/)[0].toLowerCase();
-  return COMMANDS.filter(
+  return COMMANDS.filter((c) => opts.includeHidden || !c.hidden).filter(
     (c) => c.name.startsWith(word) || c.aliases?.some((a) => a.startsWith(word)),
   );
 }
@@ -104,18 +113,13 @@ function soloAgent(ctl: Controller): string | null {
   return list.length === 1 ? list[0].name : null;
 }
 
-/** Appended to the task in plan-first mode (/plan): no edits before approval. */
-const PLAN_FIRST = `
-
-PLAN-FIRST MODE — MANDATORY: before modifying ANY file, explore the code (list_files, read_file, search), then present your implementation plan to the user with ask_user: the question is the full plan (steps + files you will touch + risks), the options are ["Approve", "Revise"], recommended = "Approve". If the user answers "Revise", ask what to change (ask_user) and present an updated plan. Start editing files ONLY after an explicit "Approve".`;
-
 function spawnFrom(
   arg: string,
   ctl: Controller,
   ui: UIActions,
   images?: string[],
   specialist?: string,
-  plan = false,
+  mode: AgentMode = 'task',
 ): void {
   const p = ctl.sessionProvider();
   if (!p) return ui.system(t('m.missingProvider'));
@@ -145,12 +149,12 @@ function spawnFrom(
   }
   // optional "Name:" prefix
   const named = task.match(/^([\p{L}\p{N}_-]{1,16}):\s+(.+)$/su);
-  const finalTask = (named ? named[2] : task) + (plan ? PLAN_FIRST : '');
-  const agent = ctl.spawnAgent(finalTask, named ? named[1] : undefined, model, images, specialist);
+  const finalTask = named ? named[2] : task;
+  const agent = ctl.spawnAgent(finalTask, named ? named[1] : undefined, model, images, specialist, undefined, mode);
   if (!agent) return ui.system(specialist ? t('m.noSpecialist', { name: specialist }) : t('m.spawnFail'));
   ui.system(
     t('m.spawned', { name: agent.name, model: model ? ` (${model})` : '' }) +
-      (plan ? ' 📋plan' : '') +
+      ` /${mode}` +
       (specialist ? ` 🎓${specialist}` : '') +
       (forced.length > 0 ? ` 🧩${forced.join(',')}` : ''),
   );
@@ -184,20 +188,38 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
   }
 
   if (images?.length) ui.system(t('m.imagesIgnored'));
-  const [cmd, ...rest] = input.split(/\s+/);
+  const [rawCmd, ...rest] = input.split(/\s+/);
+  const cmd =
+    rawCmd.toLowerCase() === '/a'
+      ? '/ask'
+      : rawCmd.toLowerCase() === '/t'
+        ? '/task'
+        : rawCmd.toLowerCase() === '/p'
+          ? '/plan'
+          : rawCmd;
   const arg = rest.join(' ').trim();
 
   switch (cmd.toLowerCase()) {
+    case '/ask': {
+      if (!arg) return ui.system(t('m.usageAsk'));
+      spawnFrom(arg, ctl, ui, images, undefined, 'ask');
+      return;
+    }
+    case '/task': {
+      if (!arg) return ui.system(t('m.usageSpawn'));
+      spawnFrom(arg, ctl, ui, images, undefined, 'task');
+      return;
+    }
     case '/spawn': {
       if (!arg) return ui.system(t('m.usageSpawn'));
-      spawnFrom(arg, ctl, ui, images);
+      spawnFrom(arg, ctl, ui, images, undefined, 'task');
       return;
     }
     case '/plan': {
       // Plan-first agent: presents its plan (ask_user) and waits for approval
       // before touching any file.
       if (!arg) return ui.system(t('m.usagePlan'));
-      spawnFrom(arg, ctl, ui, images, undefined, true);
+      spawnFrom(arg, ctl, ui, images, undefined, 'plan');
       return;
     }
     case '/issue': {
@@ -377,7 +399,7 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
         const list = ctl.getSpecialists().map((s) => s.name).join(', ') || t('m.none');
         return ui.system(t('m.noSpecialist', { name: m[1] }) + ` (${list})`);
       }
-      spawnFrom(m[2], ctl, ui, images, m[1].toLowerCase());
+      spawnFrom(m[2], ctl, ui, images, m[1].toLowerCase(), 'task');
       return;
     }
     case '/board':
@@ -452,9 +474,10 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       return;
     // SESSION-only approvals & sound (global defaults editable in /settings).
     case '/approvals': {
-      if (arg !== 'ask' && arg !== 'auto') return ui.system(t('m.usageApprovals'));
-      ctl.setSessionApprovalMode(arg);
-      ui.system(t('m.approvals', { mode: arg }) + (arg === 'auto' ? t('m.approvalsWarn') : ''));
+      const mode = normalizeShellApprovalMode(arg);
+      if (!mode) return ui.system(t('m.usageApprovals'));
+      ctl.setSessionApprovalMode(mode);
+      ui.system(t('m.approvals', { mode }) + (mode === 'auto-safe' ? t('m.approvalsWarn') : mode === 'yolo' ? t('m.approvalsYoloWarn') : ''));
       return;
     }
     case '/sound': {

@@ -101,8 +101,8 @@ if (headless) {
   const config = loadConfig();
   if (config.language) setLang(config.language);
   const ctl = new Controller(config, process.cwd());
-  // No human in the loop: commands are auto-approved (like /approvals auto).
-  ctl.setSessionApprovalMode('auto');
+  // No human in the loop: commands are auto-approved.
+  ctl.setSessionApprovalMode('yolo');
   const provider = ctl.sessionProvider();
   if (!provider || !provider.apiKey) {
     console.error('Headless mode needs a configured provider + API key. Run `parallel` interactively once, or set PARALLEL_API_KEY.');

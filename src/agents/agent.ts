@@ -7,13 +7,14 @@ import { ToolExecutor, TOOL_DEFINITIONS, ApprovalCallback, QuestionCallback } fr
 import { costOf } from '../pricing.js';
 import { skillsCatalog } from '../skills.js';
 import { getLang, LANG_NAME_EN } from '../i18n.js';
-import type { AgentInfo, ModelPrice, Skill, Specialist } from '../types.js';
+import type { AgentInfo, AgentMode, ModelPrice, Skill, Specialist } from '../types.js';
 
 // Agent-facing prompts stay in English (canonical for models). Only notes
 // addressed to the user follow the configured UI language.
 const SYSTEM_PROMPT = (
   name: string,
   task: string,
+  mode: AgentMode,
   userLang: string,
   skillsList: string,
   specialist?: Specialist,
@@ -28,6 +29,29 @@ ${specialist.role}
     : ''
 }
 YOUR TASK: ${task}
+
+AGENT MODE: ${mode}
+${
+  mode === 'ask'
+    ? `ASK MODE:
+- You are advisory only. Do not modify files.
+- You may inspect with list_files/read_file/search and safe read-only commands when useful.
+- Do not run mutating commands, write files, edit files, claim files, or commit.
+- Finish with task_complete using this user-facing structure in ${userLang}: "Réponse courte", "Recommandation", "Pourquoi", "Prochaines étapes".`
+    : mode === 'plan'
+      ? `PLAN MODE:
+- Explore first with read-only tools.
+- Before modifying any file or running mutating commands, call ask_user with a concrete implementation plan.
+- The plan must include steps, files you expect to touch, risks, and validation.
+- Use options ["Approve", "Revise"], recommended "Approve".
+- Start editing only after explicit "Approve".
+- Finish with task_complete using this user-facing structure in ${userLang}: "Plan appliqué", "Ce que j’ai modifié", "Validation", "Risques restants".`
+      : `TASK MODE:
+- Execute the user's objective end-to-end.
+- Explore, edit, validate, and summarize.
+- Ask the user only when blocked or when a risky product decision cannot be inferred.
+- Finish with task_complete using this user-facing structure in ${userLang}: "Ce que j’ai fait", "Ce que j’ai vérifié", "Résultat", "Détails techniques".`
+}
 ${
   skillsList
     ? `
@@ -79,6 +103,7 @@ export interface AgentOptions {
   alias: string;
   color: string;
   task: string;
+  mode: AgentMode;
   model: string;
   llm: LLMClient;
   board: Blackboard;
@@ -141,6 +166,7 @@ export class Agent {
       alias: opts.alias,
       color: opts.color,
       task: opts.task,
+      mode: opts.mode,
       model: opts.model,
       state: 'idle',
       currentAction: '',
@@ -300,6 +326,7 @@ export class Agent {
         content: SYSTEM_PROMPT(
           this.name,
           this.opts.task,
+          this.opts.mode,
           LANG_NAME_EN[getLang()],
           skillsCatalog(this.opts.skills),
           this.opts.specialist,

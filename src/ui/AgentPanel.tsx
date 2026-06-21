@@ -4,7 +4,8 @@ import type { AgentInfo, LogEntry } from '../types.js';
 import { fmtCost } from '../pricing.js';
 import { elapsed, truncate } from './theme.js';
 import { Md } from './Md.js';
-import { compactEvents, latestSignal, toUIEvents, type UIEvent } from './events.js';
+import { latestSignal, presentTimeline } from './events.js';
+import { Timeline } from './Timeline.js';
 import { MARK, STATE_META, UI, middleTruncate } from './tokens.js';
 
 export const KIND_COLOR: Record<string, string> = {
@@ -18,13 +19,22 @@ export const KIND_COLOR: Record<string, string> = {
 
 export const KIND_DIM: Record<string, boolean> = { llm: true };
 
-function eventColor(kind: UIEvent['kind']): string {
-  if (kind === 'error') return UI.danger;
-  if (kind === 'note') return UI.note;
-  if (kind === 'command' || kind === 'tool') return UI.accent;
-  if (kind === 'file') return UI.warn;
-  if (kind === 'thought') return UI.muted;
-  return UI.text;
+export function modeLabel(mode: AgentInfo['mode']): string {
+  return mode === 'ask' ? 'Ask' : mode === 'plan' ? 'Plan' : 'Task';
+}
+
+export function cleanHubSummary(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function agentDisplayName(agent: AgentInfo): string {
+  return agent.alias && agent.alias !== agent.name ? `${agent.alias} ${agent.name}` : agent.alias || agent.name;
 }
 
 function ResultBlock({ agent, compact = false }: { agent: AgentInfo; compact?: boolean }) {
@@ -57,30 +67,24 @@ export function AgentRow({
   cols: number;
 }) {
   const meta = STATE_META[agent.state];
-  const events = compactEvents(toUIEvents(logs));
-  const signalMax = cols < 90 ? 36 : cols < 130 ? 58 : 82;
-  const modelMax = cols < 110 ? 14 : 22;
-  const signal = truncate(latestSignal(agent, events), signalMax);
-  const tokens = Math.round((agent.tokensIn + agent.tokensOut) / 1000);
+  const events = presentTimeline(logs);
+  const signalMax = cols < 90 ? 70 : cols < 130 ? 100 : 130;
+  const signal = truncate(cleanHubSummary(agent.lastResult || latestSignal(agent, events)), signalMax);
   return (
-    <Text wrap="truncate-end">
-      <Text color={meta.color} bold>
-        {meta.mark}
+    <Box flexDirection="column" marginBottom={1}>
+      <Text wrap="truncate-end">
+        <Text color={meta.color} bold>{meta.mark}</Text>
+        <Text color={agent.color} bold> {agentDisplayName(agent)}</Text>
+        <Text color={UI.muted}>  {modeLabel(agent.mode)} </Text>
+        <Text color={meta.color} bold>{meta.label}</Text>
       </Text>
-      <Text color={agent.color} bold>
-        {' '}
-        {agent.alias || agent.name}
+      <Text color={UI.muted} wrap="truncate-end">  {truncate(agent.task, signalMax)}</Text>
+      <Text wrap="truncate-end">  {signal}</Text>
+      <Text color={UI.muted} wrap="truncate-end">
+        {'  '}
+        {elapsed(agent.startedAt)} · {agent.steps} steps · {agent.cost === null ? '$-' : fmtCost(agent.cost)} · /focus {agent.alias || agent.name}
       </Text>
-      <Text color={UI.muted}> {middleTruncate(agent.name, 12).padEnd(12)} </Text>
-      <Text color={meta.color}>{meta.label.padEnd(11)} </Text>
-      <Text>{signal}</Text>
-      <Text color={UI.muted}>
-        {' '}
-        {elapsed(agent.startedAt)} · {agent.steps} st · {tokens}k
-        {agent.ctxPct !== undefined ? ` · ${agent.ctxPct}%` : ''} · {middleTruncate(agent.model, modelMax)}
-      </Text>
-      <Text color={UI.ok}> {agent.cost === null ? '$-' : fmtCost(agent.cost)}</Text>
-    </Text>
+    </Box>
   );
 }
 
@@ -96,7 +100,6 @@ export function AgentTranscript({
   scrolled?: number;
 }) {
   const meta = STATE_META[agent.state];
-  const events = raw ? toUIEvents(logs) : compactEvents(toUIEvents(logs));
   const tokens = Math.round((agent.tokensIn + agent.tokensOut) / 1000);
   return (
     <Box flexDirection="column">
@@ -134,16 +137,7 @@ export function AgentTranscript({
         <Text color={UI.muted} bold>
           Activity{raw ? ' raw' : ''}
         </Text>
-        {events.length === 0 ? (
-          <Text color={UI.muted}>No activity yet.</Text>
-        ) : (
-          events.map((e, i) => (
-            <Text key={`${e.seq ?? i}-${i}`} color={eventColor(e.kind)} italic={e.kind === 'thought'} wrap="truncate-end">
-              <Text color={UI.muted}>{e.label.padEnd(10)}</Text>
-              {truncate(e.detail, 180)}
-            </Text>
-          ))
-        )}
+        <Timeline logs={logs} raw={raw} />
       </Box>
       <Text color={UI.muted} wrap="truncate-end">
         PgUp/PgDn scroll · /raw toggles detail · Esc returns

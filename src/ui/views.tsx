@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
 import * as Diff from 'diff';
 import { Blackboard } from '../coordination/blackboard.js';
-import { COMMANDS } from '../commands.js';
+import { visibleCommands } from '../commands.js';
 import { Controller } from '../controller.js';
 import { fmtCost } from '../pricing.js';
 import { STATE_LABEL, stateLabel, truncate } from './theme.js';
@@ -304,7 +304,13 @@ export function SessionsView({ projectRoot }: { projectRoot: string }) {
 export function HelpView() {
   // Intro (4) + title + blank lines (2) + footer (2) + border/input/status ≈ 16 rows of overhead.
   const visible = useVisibleRows(16);
-  const { slice, above, below } = useScrollWindow(COMMANDS, visible, 'top');
+  const commands = visibleCommands();
+  const { slice, above, below } = useScrollWindow(commands, visible, 'top');
+  const highlights: Array<[string, string[]]> = [
+    ['Agent modes', ['/ask', '/task', '/plan']],
+    ['Shell approvals', ['/approvals ask', '/approvals auto', '/approvals yolo']],
+    ['Navigation', ['/focus', '/attach', '/raw', '/send']],
+  ];
   return (
     <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={1}>
       <Text bold color="cyan">
@@ -322,6 +328,14 @@ export function HelpView() {
         {t('help.l2d')}
       </Text>
       <Text wrap="truncate-end">{t('help.l3')}</Text>
+      <Text> </Text>
+      {highlights.map(([label, names]) => (
+        <Text key={label} wrap="truncate-end">
+          <Text color="cyan" bold>{label}: </Text>
+          <Text color="gray">{names.join('  ')}</Text>
+        </Text>
+      ))}
+      <Text color="gray" wrap="truncate-end">Keyboard: Tab/→ autocomplete · Esc back/clear · PgUp/PgDn scroll · Ctrl+U clear · Ctrl+V image</Text>
       <Text> </Text>
       <Above n={above} />
       {slice.map((c) => (

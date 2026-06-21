@@ -87,6 +87,12 @@ export const DEFAULTS: ParallelConfig = {
   recentFolders: [],
 };
 
+function normalizeApprovalMode(mode: unknown): ParallelConfig['approvalMode'] {
+  if (mode === 'ask' || mode === 'auto-safe' || mode === 'yolo') return mode;
+  if (mode === 'auto') return 'auto-safe';
+  return 'ask';
+}
+
 export function getProvider(cfg: ParallelConfig, name?: string): ProviderConfig | undefined {
   const n = (name ?? cfg.defaultProvider).toLowerCase();
   return cfg.providers.find((p) => p.name.toLowerCase() === n) ?? (name ? undefined : cfg.providers[0]);
@@ -123,6 +129,7 @@ export function loadConfig(): ParallelConfig {
       const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
       cfg = { ...cfg, ...raw } as ParallelConfig;
       if (!Array.isArray(cfg.providers)) cfg.providers = [];
+      cfg.approvalMode = normalizeApprovalMode(raw.approvalMode);
       migrate(raw, cfg);
     }
   } catch {
@@ -146,6 +153,7 @@ export function loadConfig(): ParallelConfig {
     }
   }
   if (!Array.isArray(cfg.recentFolders)) cfg.recentFolders = [];
+  cfg.approvalMode = normalizeApprovalMode(cfg.approvalMode);
   return cfg;
 }
 

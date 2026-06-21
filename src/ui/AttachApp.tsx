@@ -8,6 +8,7 @@ import { KIND_COLOR, KIND_DIM } from './AgentPanel.js';
 import { Md } from './Md.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
 import { Spinner } from './Spinner.js';
+import { Timeline } from './Timeline.js';
 import { stateLabel, elapsed, truncate } from './theme.js';
 import { fmtCost } from '../pricing.js';
 import { t } from '../i18n.js';
@@ -63,6 +64,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
   const [approval, setApproval] = useState<WireApproval | null>(null);
   const [question, setQuestion] = useState<WireQuestion | null>(null);
   const [gone, setGone] = useState(false);
+  const [raw, setRaw] = useState(false);
   const socketRef = useRef<net.Socket | null>(null);
   const keySeq = useRef(0);
   const lastBellId = useRef('');
@@ -132,6 +134,10 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
       exit();
       return;
     }
+    if (v === '/raw') {
+      setRaw((r) => !r);
+      return;
+    }
     // /spawn <task> — launch agent N+1 from THIS terminal; its own dedicated
     // terminal opens automatically (the main TUI stays the session hub).
     const spawn = v.match(/^\/spawn\s+(.+)$/s);
@@ -163,19 +169,20 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
 
   return (
     <Box flexDirection="column">
-      {/* Native scrollback: every log line is printed ONCE, then belongs to the terminal. */}
-      <Static items={lines}>
-        {(item) => (
-          <Text
-            key={item.key}
-            color={KIND_COLOR[item.log.kind] ?? 'white'}
-            italic={KIND_DIM[item.log.kind] ?? false}
-            wrap="wrap"
-          >
-            {item.log.text}
-          </Text>
-        )}
-      </Static>
+      {raw ? (
+        <Static items={lines}>
+          {(item) => (
+            <Text
+              key={item.key}
+              color={KIND_COLOR[item.log.kind] ?? 'white'}
+              italic={KIND_DIM[item.log.kind] ?? false}
+              wrap="wrap"
+            >
+              {item.log.text}
+            </Text>
+          )}
+        </Static>
+      ) : null}
 
       {busy && info && st && !interacting ? (
         /* COMPACT region while the agent runs: small + borderless, so Ink's
@@ -204,6 +211,14 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
                 .map((o) => `${o.name} [${stateLabel(o.state)}] ${truncate(o.currentAction || o.task, 40)}`)
                 .join(' · ')}
             </Text>
+          ) : null}
+          {!raw ? (
+            <Box flexDirection="column" marginTop={1}>
+              <Text color={UI.muted} bold>
+                {t('timeline.activity')}
+              </Text>
+              <Timeline logs={lines.map((l) => l.log)} />
+            </Box>
           ) : null}
         </Box>
       ) : (
@@ -246,6 +261,14 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
                     .map((o) => `${o.name} [${stateLabel(o.state)}] ${truncate(o.currentAction || o.task, 40)}`)
                     .join(' · ')}
                 </Text>
+              ) : null}
+              {!raw ? (
+                <Box flexDirection="column" marginTop={1}>
+                  <Text color={UI.muted} bold>
+                    {t('timeline.activity')}
+                  </Text>
+                  <Timeline logs={lines.map((l) => l.log)} />
+                </Box>
               ) : null}
               {info.lastResult && (info.state === 'done' || info.state === 'error' || info.state === 'stopped') ? (
                 <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1} marginTop={1}>

@@ -226,7 +226,8 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'task_complete',
-      description: 'Call when your task is finished and verified. Notifies the other agents.',
+      description:
+        'Call when your task is finished and verified. The summary is user-facing: write it for humans, explain the logic of your conclusion, include technical details only after the outcome is clear, and follow the section structure requested by your current agent mode.',
       parameters: {
         type: 'object',
         properties: {
@@ -581,7 +582,9 @@ export class ToolExecutor {
           if (err && (err as any).killed) out += '\n(process killed: 120s timeout)';
           else if (err) out += `\n(exit code: ${(err as any).code ?? 1})`;
           if (out.length > MAX_OUTPUT) out = out.slice(0, MAX_OUTPUT) + '\n... (output truncated)';
-          resolve(out || '(no output, success)');
+          const result = out || '(no output, success)';
+          this.board.log(this.agentId, 'tool_result', result);
+          resolve(result);
         },
       );
     });

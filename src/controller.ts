@@ -15,12 +15,34 @@ import type {
   Note,
   ParallelConfig,
   ProviderConfig,
+  ShellApprovalMode,
+  AgentMode,
   SessionData,
   SessionSettings,
   Specialist,
 } from './types.js';
 
 const AGENT_COLORS = ['cyan', 'magenta', 'yellow', 'green', 'blue', 'redBright', 'cyanBright', 'magentaBright'];
+
+export function normalizeShellApprovalMode(mode: string): ShellApprovalMode | null {
+  if (mode === 'ask' || mode === 'auto-safe' || mode === 'yolo') return mode;
+  if (mode === 'auto') return 'auto-safe';
+  return null;
+}
+
+export function isRiskyCommand(command: string): boolean {
+  const c = command.toLowerCase();
+  if (/\b(sudo|su|dd|mkfs|fdisk|parted)\b/.test(c)) return true;
+  if (/\b(rm|unlink|rmdir)\b/.test(c)) return true;
+  if (/\b(chmod|chown)\s+-[^\s]*r\b/.test(c) || /\b(chmod|chown)\s+.*\s-r\b/.test(c)) return true;
+  if (/\bmv\b.*\s(\/|~|\.\.)/.test(c)) return true;
+  if (/\b(curl|wget)\b.*\|\s*(sh|bash|zsh|python|node)\b/.test(c)) return true;
+  if (/\bgit\s+(reset|clean)\b/.test(c)) return true;
+  if (/\bgit\s+push\b.*(--force|-f)\b/.test(c)) return true;
+  if (/\b(drop|truncate)\s+(table|database|schema)\b/.test(c)) return true;
+  if (/\b(prisma|knex|typeorm|sequelize|rails)\b.*\b(drop|reset|rollback|migrate)\b/.test(c)) return true;
+  return false;
+}
 
 /**
  * The Controller glues everything together: it owns the blackboard, the LLM
@@ -65,7 +87,7 @@ export class Controller extends EventEmitter {
     this.session = {
       providerName: p?.name ?? '',
       model: p?.defaultModel || p?.models[0] || '',
-      approvalMode: config.approvalMode,
+      approvalMode: normalizeShellApprovalMode(config.approvalMode) ?? 'ask',
       soundEnabled: config.soundEnabled,
     };
     this.board.on('update', () => this.emit('update'));
@@ -161,9 +183,10 @@ export class Controller extends EventEmitter {
   // ---------- approvals ----------
 
   private requestApproval = (agentId: string, command: string): Promise<boolean> => {
-    if (this.session.approvalMode === 'auto') return Promise.resolve(true);
     const base = command.trim().split(/\s+/)[0];
     if (this.sessionAllowedCommands.has(base)) return Promise.resolve(true);
+    if (this.session.approvalMode === 'yolo') return Promise.resolve(true);
+    if (this.session.approvalMode === 'auto-safe' && !isRiskyCommand(command)) return Promise.resolve(true);
     return new Promise<boolean>((resolve) => {
       const agent = this.board.agents.get(agentId);
       this.approvals.push({
@@ -257,6 +280,7 @@ export class Controller extends EventEmitter {
     images?: string[],
     specialistName?: string,
     initialHistory?: any[],
+    mode: AgentMode = 'task',
   ): Agent | null {
     // Specialist persona: role appended to the system prompt, may pin a model.
     let specialist: Specialist | undefined;
@@ -297,6 +321,7 @@ export class Controller extends EventEmitter {
       alias,
       color,
       task,
+      mode,
       model: resolved.model,
       llm: this.llmFor(resolved.provider, resolved.model),
       board: this.board,
@@ -393,7 +418,7 @@ export class Controller extends EventEmitter {
       return 'no-conversation';
     }
     if (history.length === 0) return 'no-conversation';
-    return this.spawnAgent(sa.task, sa.name, sa.model, undefined, undefined, history);
+    return this.spawnAgent(sa.task, sa.name, sa.model, undefined, undefined, history, sa.mode ?? 'task');
   }
 
   pauseAgent(name: string): boolean {
@@ -598,6 +623,7 @@ export class Controller extends EventEmitter {
         agents: [...this.board.agents.values()].map((a) => ({
           name: a.name,
           task: a.task,
+          mode: a.mode,
           state: a.state,
           lastResult: a.lastResult,
           steps: a.steps,
@@ -684,7 +710,7 @@ export class Controller extends EventEmitter {
     return true;
   }
 
-  setSessionApprovalMode(mode: 'ask' | 'auto'): void {
+  setSessionApprovalMode(mode: ShellApprovalMode): void {
     this.session.approvalMode = mode;
     this.emit('update');
   }
@@ -731,7 +757,7 @@ export class Controller extends EventEmitter {
     return true;
   }
 
-  setGlobalApprovalMode(mode: 'ask' | 'auto'): void {
+  setGlobalApprovalMode(mode: ShellApprovalMode): void {
     this.config.approvalMode = mode;
     saveConfig(this.config);
     this.emit('update');

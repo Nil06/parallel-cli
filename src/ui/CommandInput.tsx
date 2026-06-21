@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { matchCommands } from '../commands.js';
+import { matchCommands, type CommandDef } from '../commands.js';
 import { t } from '../i18n.js';
+import type { AgentInfo } from '../types.js';
 import { readClipboardImage } from './clipboard.js';
 
 type Attachment =
@@ -13,6 +14,7 @@ interface Props {
   placeholder: string;
   mask?: boolean;
   agentNames?: string[];
+  agents?: AgentInfo[];
   onSubmit: (value: string, images?: string[]) => void;
   onEscape?: () => void;
   notify?: (line: string) => void;
@@ -21,7 +23,38 @@ interface Props {
 /** A paste is "long" when it spans multiple lines — it then collapses into a chip. */
 const PASTE_MIN_LINES = 2;
 
-export function CommandInput({ active, placeholder, mask, agentNames = [], onSubmit, onEscape, notify }: Props) {
+const GROUP_LABEL: Record<string, string> = {
+  modes: 'Agent modes',
+  control: 'Control',
+  views: 'Views',
+  settings: 'Settings',
+  git: 'Git/session',
+  other: 'Other',
+};
+
+function modeHint(value: string): string {
+  const v = value.trimStart().toLowerCase();
+  if (!v) return 'Default /task · Tab/→ autocomplete · / for commands';
+  if (!v.startsWith('/')) return 'Will launch /task';
+  if (v.startsWith('/ask') || v === '/a') return 'Ask mode · advice only · no edits';
+  if (v.startsWith('/task') || v === '/t') return 'Task mode · execute, edit, validate';
+  if (v.startsWith('/plan') || v === '/p') return 'Plan mode · asks before editing';
+  return 'Tab/→ accepts the best suggestion';
+}
+
+function groupedCommands(commands: CommandDef[]): Array<[string, CommandDef[]]> {
+  const order = ['modes', 'control', 'views', 'settings', 'git', 'other'];
+  return order
+    .map((g) => [g, commands.filter((c) => (c.group ?? 'other') === g)] as [string, CommandDef[]])
+    .filter(([, items]) => items.length > 0);
+}
+
+export function bestCommandCompletion(value: string): string | null {
+  const cmd = matchCommands(value)[0];
+  return cmd ? `${cmd.name} ` : null;
+}
+
+export function CommandInput({ active, placeholder, mask, agentNames = [], agents = [], onSubmit, onEscape, notify }: Props) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [history, setHistory] = useState<string[]>([]);
@@ -72,6 +105,23 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], onSub
     notify?.(t('input.imageAdded'));
   };
 
+  const completeBest = (): boolean => {
+    const cmd = bestCommandCompletion(value);
+    if (cmd) {
+      setValue(cmd);
+      return true;
+    }
+    if (value.startsWith('@')) {
+      const frag = value.slice(1).toLowerCase();
+      const m = ['all', ...agentNames].find((n) => n.toLowerCase().startsWith(frag));
+      if (m) {
+        setValue('@' + m + ' ');
+        return true;
+      }
+    }
+    return false;
+  };
+
   useInput(
     (input, key) => {
       if (key.escape) {
@@ -117,17 +167,8 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], onSub
         });
         return;
       }
-      if (key.tab) {
-        const cmds = matchCommands(value);
-        if (cmds.length > 0) {
-          setValue(cmds[0].name + ' ');
-          return;
-        }
-        if (value.startsWith('@')) {
-          const frag = value.slice(1).toLowerCase();
-          const m = ['all', ...agentNames].find((n) => n.toLowerCase().startsWith(frag));
-          if (m) setValue('@' + m + ' ');
-        }
+      if (key.tab || key.rightArrow) {
+        completeBest();
         return;
       }
       if (key.ctrl && input === 'u') {
@@ -160,25 +201,32 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], onSub
     { isActive: active },
   );
 
-  const cmdSuggestions = value.startsWith('/') && !value.includes(' ') ? matchCommands(value).slice(0, 8) : [];
+  const cmdSuggestions = value.startsWith('/') && !value.includes(' ') ? matchCommands(value).slice(0, 10) : [];
   const agentSuggestions =
     value.startsWith('@') && !value.includes(' ')
       ? ['all', ...agentNames].filter((n) => n.toLowerCase().startsWith(value.slice(1).toLowerCase())).slice(0, 8)
       : [];
   const shown = mask ? '•'.repeat(value.length) : value;
+  const byName = new Map(agents.flatMap((a) => [[a.name, a], [a.alias, a]]));
 
   return (
     <Box flexDirection="column">
+      <Text color="gray" wrap="truncate-end">{modeHint(value)}</Text>
       {cmdSuggestions.length > 0 && (
         <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
-          {cmdSuggestions.map((c) => (
-            <Text key={c.name}>
-              <Text color="cyan" bold>
-                {c.name.padEnd(16)}
-              </Text>
-              <Text color="yellow">{c.args.padEnd(22)}</Text>
-              <Text color="gray">{t(c.descKey)}</Text>
-            </Text>
+          {groupedCommands(cmdSuggestions).map(([group, commands]) => (
+            <Box key={group} flexDirection="column">
+              <Text color="gray" bold>{GROUP_LABEL[group] ?? group}</Text>
+              {commands.map((c) => (
+                <Text key={c.name}>
+                  <Text color="cyan" bold>
+                    {c.name.padEnd(14)}
+                  </Text>
+                  <Text color="yellow">{c.args.padEnd(22)}</Text>
+                  <Text color="gray">{t(c.descKey)}</Text>
+                </Text>
+              ))}
+            </Box>
           ))}
         </Box>
       )}
@@ -187,11 +235,12 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], onSub
           {agentSuggestions.map((n) => (
             <Text key={n}>
               <Text color="cyan" bold>
-                @{n}
+                @{n.padEnd(10)}
               </Text>
               <Text color="gray">
-                {t('input.atHint')}
-                {n === 'all' ? t('input.atAll') : ''}
+                {n === 'all'
+                  ? t('input.atAll')
+                  : `${byName.get(n)?.state ?? ''} ${byName.get(n)?.mode ? `/${byName.get(n)?.mode}` : ''}`}
               </Text>
             </Text>
           ))}

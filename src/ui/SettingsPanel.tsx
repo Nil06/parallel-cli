@@ -5,7 +5,7 @@ import { createSkillTemplate, createSpecialistTemplate } from '../skills.js';
 import { priceFor } from '../pricing.js';
 import { SelectList, type SelectItem } from './Wizard.js';
 import { LANGS, getLang, setLang, t } from '../i18n.js';
-import type { Lang, ProviderConfig } from '../types.js';
+import type { Lang, ProviderConfig, ShellApprovalMode } from '../types.js';
 
 type Step =
   | { id: 'root' }
@@ -26,6 +26,12 @@ type Step =
 function masked(key: string): string {
   if (!key) return '—';
   return '••••' + key.slice(-4);
+}
+
+function nextApprovalMode(mode: ShellApprovalMode): ShellApprovalMode {
+  if (mode === 'ask') return 'auto-safe';
+  if (mode === 'auto-safe') return 'yolo';
+  return 'ask';
 }
 
 /**
@@ -96,8 +102,8 @@ export function SettingsPanel({
     if (v === 'newSkill') return setStep({ id: 'newSkill' });
     if (v === 'newSpecialist') return setStep({ id: 'newSpecialist' });
     if (v === 'approvals') {
-      if (scope === 'global') ctl.setGlobalApprovalMode(cfg.approvalMode === 'ask' ? 'auto' : 'ask');
-      else ctl.setSessionApprovalMode(ctl.session.approvalMode === 'ask' ? 'auto' : 'ask');
+      if (scope === 'global') ctl.setGlobalApprovalMode(nextApprovalMode(cfg.approvalMode));
+      else ctl.setSessionApprovalMode(nextApprovalMode(ctl.session.approvalMode));
       if (scope === 'global') saved();
       return;
     }

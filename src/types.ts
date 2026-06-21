@@ -16,6 +16,7 @@ export interface AgentInfo {
   alias: string;
   color: string;
   task: string;
+  mode: AgentMode;
   model: string;
   state: AgentState;
   currentAction: string;
@@ -61,7 +62,7 @@ export interface FileChange {
   ts: number;
 }
 
-export type LogKind = 'info' | 'tool' | 'llm' | 'error' | 'note' | 'system';
+export type LogKind = 'info' | 'tool' | 'tool_result' | 'llm' | 'error' | 'note' | 'system';
 
 export interface LogEntry {
   agentId: string; // '' = global/system
@@ -97,7 +98,9 @@ export interface AgentQuestion {
   resolve: (answer: string) => void;
 }
 
-export type ApprovalMode = 'ask' | 'auto';
+export type ShellApprovalMode = 'ask' | 'auto-safe' | 'yolo';
+export type ApprovalMode = ShellApprovalMode;
+export type AgentMode = 'ask' | 'task' | 'plan';
 
 export type Lang = 'en' | 'zh' | 'es' | 'fr';
 
@@ -128,7 +131,7 @@ export interface ParallelConfig {
   language?: Lang;
   providers: ProviderConfig[];
   defaultProvider: string;
-  approvalMode: ApprovalMode;
+  approvalMode: ShellApprovalMode;
   maxStepsPerAgent: number;
   soundEnabled: boolean;
   recentFolders: string[];
@@ -138,7 +141,7 @@ export interface ParallelConfig {
 export interface SessionSettings {
   providerName: string;
   model: string;
-  approvalMode: ApprovalMode;
+  approvalMode: ShellApprovalMode;
   soundEnabled: boolean;
 }
 
@@ -150,6 +153,7 @@ export interface SessionData {
   agents: {
     name: string;
     task: string;
+    mode?: AgentMode;
     state: string;
     lastResult?: string;
     steps?: number;
