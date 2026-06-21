@@ -170,23 +170,23 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], onSub
   return (
     <Box flexDirection="column">
       {cmdSuggestions.length > 0 && (
-        <Box borderStyle="round" borderColor="gray" flexDirection="column" paddingX={1}>
+        <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
           {cmdSuggestions.map((c) => (
             <Text key={c.name}>
               <Text color="cyan" bold>
-                {c.name.padEnd(18)}
+                {c.name.padEnd(16)}
               </Text>
-              <Text color="yellow">{c.args.padEnd(24)}</Text>
+              <Text color="yellow">{c.args.padEnd(22)}</Text>
               <Text color="gray">{t(c.descKey)}</Text>
             </Text>
           ))}
         </Box>
       )}
       {agentSuggestions.length > 0 && (
-        <Box borderStyle="round" borderColor="gray" flexDirection="column" paddingX={1}>
+        <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
           {agentSuggestions.map((n) => (
             <Text key={n}>
-              <Text color="magenta" bold>
+              <Text color="cyan" bold>
                 @{n}
               </Text>
               <Text color="gray">
@@ -207,9 +207,9 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], onSub
           ))}
         </Box>
       )}
-      <Box borderStyle="round" borderColor={active ? 'cyan' : 'gray'} paddingX={1}>
+      <Box borderStyle="single" borderColor={active ? 'cyan' : 'gray'} paddingX={1}>
         <Text color="cyanBright" bold>
-          ❯{' '}
+          ›{' '}
         </Text>
         {shown ? (
           <>

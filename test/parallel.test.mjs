@@ -8,6 +8,7 @@ import { Agent } from '../dist/agents/agent.js';
 import { ToolExecutor } from '../dist/agents/tools.js';
 import { Blackboard } from '../dist/coordination/blackboard.js';
 import { costOf } from '../dist/pricing.js';
+import { compactEvents, latestSignal, toUIEvents } from '../dist/ui/events.js';
 
 function tmpProject(name) {
   return mkdtempSync(path.join(tmpdir(), `parallel-${name}-`));
@@ -120,4 +121,43 @@ test('ask_user asks at most three questions and resumes the agent with the answe
 
   assert.equal(asked.length, 3);
   assert.match(limited, /Question limit reached \(3 per task\)/);
+});
+
+test('UI events compact repetitive file reads for the control room', () => {
+  const logs = [
+    { agentId: 'a', kind: 'tool', text: 'read src/ui/App.tsx', ts: 1, seq: 1 },
+    { agentId: 'a', kind: 'tool', text: 'read src/ui/views.tsx', ts: 2, seq: 2 },
+    { agentId: 'a', kind: 'tool', text: 'read src/commands.ts', ts: 3, seq: 3 },
+    { agentId: 'a', kind: 'tool', text: 'npm test', ts: 4, seq: 4 },
+  ];
+
+  const compacted = compactEvents(toUIEvents(logs));
+
+  assert.equal(compacted.length, 2);
+  assert.equal(compacted[0].kind, 'file');
+  assert.equal(compacted[0].label, 'read 3');
+  assert.match(compacted[0].detail, /src\/ui\/App\.tsx/);
+  assert.equal(compacted[1].kind, 'command');
+});
+
+test('latestSignal prefers current action over noisy logs', () => {
+  const agent = {
+    id: 'a',
+    name: 'Agent-A',
+    alias: 'a1',
+    color: 'cyan',
+    task: 'audit UI',
+    model: 'test-model',
+    state: 'working',
+    currentAction: 'Compiling final report',
+    steps: 3,
+    tokensIn: 0,
+    tokensOut: 0,
+    cost: 0,
+    startedAt: Date.now(),
+  };
+
+  const signal = latestSignal(agent, toUIEvents([{ agentId: 'a', kind: 'llm', text: 'thinking aloud', ts: 1, seq: 1 }]));
+
+  assert.equal(signal, 'Compiling final report');
 });

@@ -21,6 +21,8 @@ export interface UIActions {
   exit: () => void;
   /** Focus mode: plain input goes to this agent; null = off. */
   setFocus?: (agentName: string | null) => void;
+  toggleRaw?: () => void;
+  copyLatest?: () => void;
 }
 
 export interface CommandDef {
@@ -60,6 +62,9 @@ export const COMMANDS: CommandDef[] = [
   { name: '/notes', args: '', descKey: 'cmd.notes' },
   { name: '/diff', args: '', descKey: 'cmd.diff' },
   { name: '/cost', args: '', descKey: 'cmd.cost' },
+  { name: '/status', args: '', descKey: 'cmd.status' },
+  { name: '/raw', args: '', descKey: 'cmd.raw' },
+  { name: '/copy', args: '', descKey: 'cmd.copy' },
   // sessions
   { name: '/save', args: '[name]', descKey: 'cmd.save' },
   { name: '/sessions', args: '', descKey: 'cmd.sessions' },
@@ -314,6 +319,24 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     }
     case '/cost':
       ui.setView('cost');
+      return;
+    case '/status': {
+      const p = ctl.sessionProvider();
+      const agents = [...ctl.board.agents.values()];
+      const active = agents.filter((a) => ['working', 'thinking', 'listening', 'waiting'].includes(a.state)).length;
+      const cost = agents.reduce((s, a) => s + (a.cost ?? 0), 0);
+      const changed = new Set(ctl.board.changes.map((c) => c.path)).size;
+      ui.system(
+        `Status: ${p ? `${p.name}:${ctl.session.model}` : '-'} · approvals ${ctl.session.approvalMode} · agents ${agents.length}/${active} active · changes ${changed} · cost $${cost.toFixed(3)}`,
+      );
+      return;
+    }
+    case '/raw':
+      ui.toggleRaw?.();
+      ui.system('Raw activity toggled for focus view.');
+      return;
+    case '/copy':
+      ui.copyLatest?.();
       return;
     case '/skills':
       ui.setView('skills');

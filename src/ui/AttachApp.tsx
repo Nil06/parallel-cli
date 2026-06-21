@@ -8,9 +8,10 @@ import { KIND_COLOR, KIND_DIM } from './AgentPanel.js';
 import { Md } from './Md.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
 import { Spinner } from './Spinner.js';
-import { STATE_LABEL, stateLabel, elapsed, truncate } from './theme.js';
+import { stateLabel, elapsed, truncate } from './theme.js';
 import { fmtCost } from '../pricing.js';
 import { t } from '../i18n.js';
+import { STATE_META, UI, middleTruncate } from './tokens.js';
 
 /**
  * `parallel attach <agent>` — one DEDICATED terminal per agent.
@@ -141,19 +142,20 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
     wire({ type: 'input', agent: agentRef, text: v });
   };
 
-  const st = info ? STATE_LABEL[info.state] : null;
+  const st = info ? STATE_META[info.state] : null;
   const busy = info ? ['thinking', 'working', 'listening'].includes(info.state) : false;
   const interacting = Boolean(approval || question);
 
   const banner = (
     <Text wrap="truncate-end">
-      <Text backgroundColor={info?.color ?? 'gray'} color="black" bold>
-        {' '}⛓ {t('attach.banner')}{' '}
+      <Text color={UI.brand} bold>
+        {t('attach.banner')}
       </Text>
       {info ? (
         <Text color={info.color} bold>
-          {' '}◆ {info.name}
-          {info.alias && info.alias !== info.name ? <Text color="gray"> @{info.alias}</Text> : null}
+          {' '}
+          {info.name}
+          {info.alias && info.alias !== info.name ? <Text color={UI.muted}> @{info.alias}</Text> : null}
         </Text>
       ) : null}
     </Text>
@@ -181,27 +183,23 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
          * what used to leave stray blank lines in the native scrollback. */
         <Box flexDirection="column" marginTop={1}>
           <Text wrap="truncate-end">
-            <Text backgroundColor={info.color} color="black" bold>
-              {' '}⛓ {info.name}{' '}
-            </Text>{' '}
-            <Text backgroundColor={st.color} color="black" bold>
-              {' '}{st.icon} {stateLabel(info.state)}{' '}
-            </Text>{' '}
+            <Text color={info.color} bold>{info.alias || info.name}</Text>{' '}
+            <Text color={st.color} bold>{st.mark} {st.label}</Text>{' '}
             <Spinner color={info.color} />
-            <Text color="gray">
+            <Text color={UI.muted}>
               {' '}· {elapsed(info.startedAt)} · {info.steps} st ·{' '}
               {Math.round((info.tokensIn + info.tokensOut) / 1000)}k ·{' '}
             </Text>
-            <Text color="greenBright">{info.cost === null ? '$—' : fmtCost(info.cost)}</Text>
+            <Text color={UI.ok}>{info.cost === null ? '$-' : fmtCost(info.cost)}</Text>
           </Text>
           {info.currentAction ? (
             <Text color={info.color} wrap="truncate-end">
-              ▸ {truncate(info.currentAction, 120)}
+              Current  {truncate(info.currentAction, 120)}
             </Text>
           ) : null}
           {others.length > 0 ? (
-            <Text color="gray" wrap="truncate-end">
-              ⇄{' '}
+            <Text color={UI.muted} wrap="truncate-end">
+              Others  {' '}
               {others
                 .map((o) => `${o.name} [${stateLabel(o.state)}] ${truncate(o.currentAction || o.task, 40)}`)
                 .join(' · ')}
@@ -210,41 +208,40 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
         </Box>
       ) : (
         /* FULL panel when idle / waiting / done — repaints are rare here. */
-        <Box borderStyle="round" borderColor={info?.color ?? 'gray'} flexDirection="column" paddingX={1} marginTop={1}>
+        <Box borderStyle="single" borderColor={info?.color ?? 'gray'} flexDirection="column" paddingX={1} marginTop={1}>
           {info && st ? (
             <>
               <Box justifyContent="space-between">
                 <Box>
                   {banner}
-                  <Text backgroundColor={st.color} color="black" bold>
-                    {' '}
-                    {st.icon} {stateLabel(info.state)}{' '}
+                  <Text color={st.color} bold>
+                    {' '}{st.mark} {st.label}
                   </Text>
                 </Box>
-                <Text color="gray" wrap="truncate-end">
-                  {truncate(info.model, 18)} · {elapsed(info.startedAt)} · {info.steps} st ·{' '}
+                <Text color={UI.muted} wrap="truncate-end">
+                  {middleTruncate(info.model, 18)} · {elapsed(info.startedAt)} · {info.steps} st ·{' '}
                   {Math.round((info.tokensIn + info.tokensOut) / 1000)}k ·{' '}
                   {info.ctxPct !== undefined ? (
-                    <Text color={info.ctxPct >= 90 ? 'redBright' : info.ctxPct >= 70 ? 'yellowBright' : 'gray'}>
-                      ◔{info.ctxPct}% ·{' '}
+                    <Text color={info.ctxPct >= 90 ? UI.danger : info.ctxPct >= 70 ? UI.warn : UI.muted}>
+                      {info.ctxPct}% ·{' '}
                     </Text>
                   ) : null}
-                  <Text color="greenBright">{info.cost === null ? '$—' : fmtCost(info.cost)}</Text>
+                  <Text color={UI.ok}>{info.cost === null ? '$-' : fmtCost(info.cost)}</Text>
                 </Text>
               </Box>
-              <Text color="gray" wrap="wrap">
-                ◦ {info.task}
+              <Text color={UI.muted} wrap="wrap">
+                Task  <Text color={UI.text}>{info.task}</Text>
               </Text>
               {info.currentAction ? (
                 <Text color={info.color} wrap="truncate-end">
-                  ▸ {truncate(info.currentAction, 160)}
+                  Current  {truncate(info.currentAction, 160)}
                 </Text>
               ) : null}
               {others.length > 0 ? (
                 // The session's shared awareness, visible here too: what the
                 // OTHER agents are doing right now (live, same feed the agents get).
-                <Text color="gray" wrap="truncate-end">
-                  ⇄{' '}
+                <Text color={UI.muted} wrap="truncate-end">
+                  Others  {' '}
                   {others
                     .map((o) => `${o.name} [${stateLabel(o.state)}] ${truncate(o.currentAction || o.task, 40)}`)
                     .join(' · ')}
@@ -252,8 +249,8 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
               ) : null}
               {info.lastResult && (info.state === 'done' || info.state === 'error' || info.state === 'stopped') ? (
                 <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1} marginTop={1}>
-                  <Text color="greenBright" bold>
-                    {t('agent.summary')}
+                  <Text color={UI.ok} bold>
+                    Result
                   </Text>
                   <Md text={info.lastResult} />
                 </Box>
@@ -262,7 +259,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
           ) : (
             <Text color="gray">{gone ? t('attach.gone') : t('attach.waiting', { agent: agentRef })}</Text>
           )}
-          {gone && info ? <Text color="redBright">{t('attach.gone')}</Text> : null}
+          {gone && info ? <Text color={UI.danger}>{t('attach.gone')}</Text> : null}
         </Box>
       )}
 

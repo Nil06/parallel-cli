@@ -9,15 +9,17 @@ import { PROVIDER_PRESETS, getProvider, rememberFolder, saveConfig } from '../co
 import { fmtCost } from '../pricing.js';
 import { LANGS, setLang, t } from '../i18n.js';
 import type { Lang, ParallelConfig, ProviderConfig, SessionData } from '../types.js';
-import { AgentPanel } from './AgentPanel.js';
+import { AgentRow, AgentTranscript } from './AgentPanel.js';
 import { ApprovalPrompt } from './ApprovalPrompt.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
 import { CommandInput } from './CommandInput.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { BoardView, CostView, DiffView, HelpView, NotesView, SessionsView, SkillsView, SpecialistsView } from './views.js';
 import { SelectList, WizardStep, type SelectItem } from './Wizard.js';
+import { STATE_META, UI, middleTruncate } from './tokens.js';
+import type { AgentInfo } from '../types.js';
 
-const LOGO = '⚡ P A R A L L E L';
+const LOGO = 'Parallel';
 
 type Phase = 'lang' | 'folder' | 'session' | 'provider' | 'model' | 'main';
 type ProviderStep =
@@ -79,6 +81,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   const [view, setView] = useState<ViewName>('agents');
   // Focus mode (/focus <agent>): plain input is routed to that agent.
   const [focus, setFocus] = useState<string | null>(null);
+  const [rawLogs, setRawLogs] = useState(false);
   const [systemLines, setSystemLines] = useState<string[]>(
     directFolder ? [t('main.ready1', { folder: directFolder }), t('main.ready2')] : [],
   );
@@ -125,6 +128,18 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
         setTimeout(() => exit(), 50);
       },
       setFocus,
+      toggleRaw: () => setRawLogs((v) => !v),
+      copyLatest: () => {
+        const agents = [...(ctlRef.current?.board.agents.values() ?? [])].filter((a) => a.lastResult);
+        const latest = agents.sort((a, b) => b.startedAt - a.startedAt)[0];
+        if (!latest?.lastResult) {
+          setSystemLines((ls) => [...ls.slice(-5), 'No completed agent output to copy.']);
+          return;
+        }
+        const encoded = Buffer.from(latest.lastResult).toString('base64');
+        process.stdout.write(`\x1b]52;c;${encoded}\x07`);
+        setSystemLines((ls) => [...ls.slice(-5), `Copied latest result from ${latest.name}.`]);
+      },
     }),
     [exit],
   );
@@ -472,6 +487,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
       folder={folder}
       view={view}
       focus={focus}
+      rawLogs={rawLogs}
       systemLines={systemLines}
       agentNames={agentNames}
       approval={approval}
@@ -503,6 +519,7 @@ function MainScreen({
   folder,
   view,
   focus,
+  rawLogs,
   systemLines,
   agentNames,
   approval,
@@ -516,6 +533,7 @@ function MainScreen({
   folder: string;
   view: ViewName;
   focus: string | null;
+  rawLogs: boolean;
   systemLines: string[];
   agentNames: string[];
   approval: Controller['approvals'][number] | undefined;
@@ -529,9 +547,8 @@ function MainScreen({
   // Adapt the layout to the REAL terminal size (never resize the user's terminal).
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 100;
-  const narrow = cols < 110;
-  const logsPerAgent = agents.length <= 1 ? 10 : agents.length <= 2 ? 7 : 5;
-  const width = agents.length === 1 || narrow ? '100%' : '50%';
+  const rows = stdout?.rows ?? 30;
+  const narrow = cols < 90;
   const settingsOpen = view === 'settings' || view === 'settings-session';
 
   // Focus mode: one agent rendered alone, with scrollback (PgUp/PgDn).
@@ -540,7 +557,7 @@ function MainScreen({
     : undefined;
   const [scroll, setScroll] = useState(0);
   useEffect(() => setScroll(0), [focus]);
-  const FOCUS_LOGS = 20;
+  const FOCUS_LOGS = Math.max(8, rows - 13);
   const focusedLogs = focused ? ctl.board.logs.filter((l) => l.agentId === focused.id) : [];
   const maxScroll = Math.max(0, focusedLogs.length - FOCUS_LOGS);
   const clampedScroll = Math.min(scroll, maxScroll);
@@ -551,21 +568,10 @@ function MainScreen({
       )
     : [];
 
-  // Grid scroll: when more agents than fit on screen, PgUp/PgDn slides a
-  // window over the agent panels (with ▲/▼ indicators so you know where you are).
-  const GRID_CAP = narrow ? 2 : 4;
-  const [gridScroll, setGridScroll] = useState(0);
-  const maxGridScroll = Math.max(0, agents.length - GRID_CAP);
-  const clampedGrid = Math.min(gridScroll, maxGridScroll);
-  const visibleAgents = agents.length > GRID_CAP ? agents.slice(clampedGrid, clampedGrid + GRID_CAP) : agents;
-
-  // Solo scroll: with a SINGLE agent on the agents view, PgUp/PgDn scrolls
-  // its log history (same behaviour as /focus, without needing to focus).
-  const solo = agents.length === 1 ? agents[0] : null;
-  const [soloScroll, setSoloScroll] = useState(0);
-  const soloLogs = solo ? ctl.board.logs.filter((l) => l.agentId === solo.id) : [];
-  const maxSoloScroll = Math.max(0, soloLogs.length - logsPerAgent);
-  const clampedSolo = Math.min(soloScroll, maxSoloScroll);
+  const [hubScroll, setHubScroll] = useState(0);
+  const hubRows = Math.max(8, rows - 12);
+  const maxHubScroll = Math.max(0, agents.length - hubRows);
+  const clampedHub = Math.min(hubScroll, maxHubScroll);
 
   // Esc always returns to the agents view, even while approval is shown.
   useInput((_input, key) => {
@@ -574,15 +580,8 @@ function MainScreen({
       if (key.pageUp) setScroll((s) => Math.min(s + 10, maxScroll));
       if (key.pageDown) setScroll((s) => Math.max(0, s - 10));
     } else if (view === 'agents') {
-      // Scroll only on the agents view — every other long view
-      // (/help, /notes, /diff…) owns PgUp/PgDn for its own scrolling.
-      if (solo) {
-        if (key.pageUp) setSoloScroll((s) => Math.min(Math.min(s, maxSoloScroll) + 5, maxSoloScroll));
-        if (key.pageDown) setSoloScroll((s) => Math.max(0, Math.min(s, maxSoloScroll) - 5));
-      } else {
-        if (key.pageUp) setGridScroll((s) => Math.max(0, Math.min(s, maxGridScroll) - 1));
-        if (key.pageDown) setGridScroll((s) => Math.min(Math.min(s, maxGridScroll) + 1, maxGridScroll));
-      }
+      if (key.pageUp) setHubScroll((s) => Math.max(0, Math.min(s, maxHubScroll) - 5));
+      if (key.pageDown) setHubScroll((s) => Math.min(Math.min(s, maxHubScroll) + 5, maxHubScroll));
     }
   });
 
@@ -591,28 +590,35 @@ function MainScreen({
     ['working', 'thinking', 'listening', 'waiting'].includes(a.state),
   ).length;
   const totalCost = agents.reduce((s, a) => s + (a.cost ?? 0), 0);
+  const needsInput = ctl.approvals.length + ctl.questions.length + agents.filter((a) => ['waiting', 'paused'].includes(a.state)).length;
+  const completedCount = agents.filter((a) => ['done', 'stopped', 'error'].includes(a.state)).length;
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      {/* header — the ⌂ HUB badge tells this terminal apart from the agents'
-          dedicated terminals (which carry a colored ⛓ AGENT banner). */}
       <Box justifyContent="space-between">
-        <Box>
-          <Text backgroundColor="cyan" color="black" bold>
-            {' '}⌂ HUB{' '}
-          </Text>
-          <Text bold color="cyanBright">
-            {' '}{LOGO}
-          </Text>
-        </Box>
+        <Text bold color={UI.brand}>
+          {LOGO}
+          <Text color={UI.muted}> control room</Text>
+        </Text>
         <Text color="gray">
-          {p ? `${p.name}:${ctl.session.model}` : '—'} · {p ? p.baseUrl.replace(/^https?:\/\//, '') : ''} ·{' '}
-          {ctl.session.approvalMode} · {ctl.session.soundEnabled ? '🔔' : '🔕'}
+          {p ? `${p.name}:${middleTruncate(ctl.session.model, narrow ? 18 : 30)}` : '-'} · {ctl.session.approvalMode} ·{' '}
+          {activeCount} active · {fmtCost(totalCost)}
         </Text>
       </Box>
       <Text color="gray" wrap="truncate-end">
-        📁 {folder}
+        {middleTruncate(folder, cols - 2)}
       </Text>
+      {agents.length > 0 ? (
+        <Text color={UI.muted} wrap="truncate-end">
+          <Text color={needsInput > 0 ? UI.warn : UI.muted}>Needs input {needsInput}</Text>
+          {'  '}
+          <Text color={activeCount > 0 ? UI.accent : UI.muted}>Working {activeCount}</Text>
+          {'  '}
+          <Text color={completedCount > 0 ? UI.ok : UI.muted}>Completed {completedCount}</Text>
+          {'  '}
+          <Text>Agents {agents.length}</Text>
+        </Text>
+      ) : null}
 
       {/* body */}
       {view === 'settings' ? (
@@ -636,46 +642,15 @@ function MainScreen({
       ) : view === 'help' ? (
         <HelpView />
       ) : agents.length === 0 ? (
-        <Box borderStyle="round" borderColor="gray" flexDirection="column" paddingX={1}>
+        <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
           <Text color="gray">{t('main.empty')}</Text>
         </Box>
       ) : focused ? (
         <Box flexDirection="column">
-          <AgentPanel agent={focused} logs={visibleLogs} width="100%" expanded />
-          <Text color="gray" wrap="truncate-end">
-            {t('m.focusHint', { name: focused.name })}
-            {clampedScroll > 0 ? ` · ↑${clampedScroll}` : ''}
-          </Text>
+          <AgentTranscript agent={focused} logs={visibleLogs} raw={rawLogs} scrolled={clampedScroll} />
         </Box>
       ) : (
-        <Box flexDirection="column">
-          {clampedGrid > 0 ? <Text color="gray">{t('grid.above', { n: clampedGrid })}</Text> : null}
-          <Box flexWrap="wrap">
-            {visibleAgents.map((a) => (
-              <AgentPanel
-                key={a.id}
-                agent={a}
-                logs={
-                  solo
-                    ? soloLogs.slice(
-                        Math.max(0, soloLogs.length - logsPerAgent - clampedSolo),
-                        soloLogs.length - clampedSolo,
-                      )
-                    : ctl.board.logsFor(a.id, logsPerAgent)
-                }
-                width={width}
-              />
-            ))}
-          </Box>
-          {solo && clampedSolo > 0 ? (
-            <Text color="gray" wrap="truncate-end">
-              ↑{clampedSolo} · PgDn ⇣
-            </Text>
-          ) : null}
-          {agents.length - clampedGrid - visibleAgents.length > 0 ? (
-            <Text color="gray">{t('grid.below', { n: agents.length - clampedGrid - visibleAgents.length })}</Text>
-          ) : null}
-        </Box>
+        <AgentHub agents={agents} ctl={ctl} cols={cols} scroll={clampedHub} visibleRows={hubRows} />
       )}
 
       {/* system messages */}
@@ -711,7 +686,7 @@ function MainScreen({
       {/* input */}
       <CommandInput
         active={inputActive}
-        placeholder={t('main.placeholder')}
+        placeholder={focus ? `Message ${focus} or /command` : 'Ask Parallel or / for commands'}
         agentNames={agentNames}
         onSubmit={onInput}
         onEscape={onEscape}
@@ -730,6 +705,69 @@ function MainScreen({
             (ctl.approvals.length > 0 ? ` · ⏳${ctl.approvals.length}` : '') +
             (focused ? ` · 🎯 ${focused.name}` : '')}
       </Text>
+    </Box>
+  );
+}
+
+function groupAgents(agents: AgentInfo[]): { title: string; color: string; agents: AgentInfo[] }[] {
+  const needs = agents.filter((a) => ['waiting', 'paused'].includes(a.state));
+  const working = agents.filter((a) => ['working', 'thinking', 'listening', 'idle'].includes(a.state));
+  const errors = agents.filter((a) => ['error', 'stopped'].includes(a.state));
+  const completed = agents.filter((a) => a.state === 'done');
+  return [
+    { title: 'Needs input', color: UI.warn, agents: needs },
+    { title: 'Working', color: UI.accent, agents: working },
+    { title: 'Errors', color: UI.danger, agents: errors },
+    { title: 'Completed', color: UI.ok, agents: completed },
+  ].filter((g) => g.agents.length > 0);
+}
+
+function AgentHub({
+  agents,
+  ctl,
+  cols,
+  scroll,
+  visibleRows,
+}: {
+  agents: AgentInfo[];
+  ctl: Controller;
+  cols: number;
+  scroll: number;
+  visibleRows: number;
+}) {
+  const groups = groupAgents([...agents].sort((a, b) => STATE_META[a.state].rank - STATE_META[b.state].rank || a.startedAt - b.startedAt));
+  let skipped = scroll;
+  let rendered = 0;
+  const rows: React.ReactNode[] = [];
+  for (const group of groups) {
+    const groupRows: React.ReactNode[] = [];
+    for (const agent of group.agents) {
+      if (skipped > 0) {
+        skipped--;
+        continue;
+      }
+      if (rendered >= visibleRows) continue;
+      rendered++;
+      groupRows.push(
+        <AgentRow key={agent.id} agent={agent} logs={ctl.board.logsFor(agent.id, 8)} cols={cols} />,
+      );
+    }
+    if (groupRows.length === 0) continue;
+    rows.push(
+      <Box key={group.title} flexDirection="column" marginTop={rows.length === 0 ? 0 : 1}>
+        <Text color={group.color} bold>
+          {group.title}
+        </Text>
+        {groupRows}
+      </Box>,
+    );
+  }
+  const below = Math.max(0, agents.length - scroll - rendered);
+  return (
+    <Box flexDirection="column">
+      {scroll > 0 ? <Text color={UI.muted}>▲ {scroll} older · PgUp</Text> : null}
+      {rows}
+      {below > 0 ? <Text color={UI.muted}>▼ {below} more · PgDn</Text> : null}
     </Box>
   );
 }
