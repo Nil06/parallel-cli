@@ -5,6 +5,7 @@ import { createSkillTemplate, createSpecialistTemplate } from '../skills.js';
 import { priceFor } from '../pricing.js';
 import { SelectList, type SelectItem } from './Wizard.js';
 import { LANGS, getLang, setLang, t } from '../i18n.js';
+import { PROVIDER_PRESETS } from '../config.js';
 import type { Lang, ProviderConfig, ShellApprovalMode } from '../types.js';
 
 type Step =
@@ -439,29 +440,88 @@ export function SettingsPanel({
               {step.scope === 'global' ? t('set.providers.title') : t('sset.providers.title')}
             </Text>
             <SelectList
-              items={[
-                ...cfg.providers.map((p) => ({
-                  label: p.name,
-                  value: p.name,
-                  hint: providerStatus(p, cfg.defaultProvider),
-                })),
-                { label: t('set.providers.add'), value: '__add__' },
-                { label: step.scope === 'global' ? t('set.providers.back') : t('sset.providers.back'), value: '__back__' },
-              ]}
+              items={(() => {
+                const configuredNames = new Set(cfg.providers.map((p) => p.name.toLowerCase()));
+                const items: SelectItem[] = [];
+
+                // Section: Configured
+                if (cfg.providers.length > 0) {
+                  items.push({ label: t('wiz.provider.section.configured'), value: '', section: true });
+                  for (const p of cfg.providers) {
+                    items.push({
+                      label: p.name,
+                      value: p.name,
+                      detail: providerStatus(p, cfg.defaultProvider),
+                    });
+                  }
+                }
+
+                // Section: Cloud Providers — presets not yet configured, exclude Ollama
+                const cloudPresets = PROVIDER_PRESETS.filter(
+                  (p) => p.name.toLowerCase() !== 'ollama' && !configuredNames.has(p.name.toLowerCase()),
+                );
+                if (cloudPresets.length > 0) {
+                  items.push({ label: t('wiz.provider.section.cloud'), value: '', section: true });
+                  for (const p of cloudPresets) {
+                    items.push({
+                      label: p.name,
+                      value: `__preset__${p.name}`,
+                      detail: p.defaultModel,
+                    });
+                  }
+                }
+
+                // Section: Local
+                const ollamaPreset = PROVIDER_PRESETS.find((p) => p.name.toLowerCase() === 'ollama');
+                if (ollamaPreset && !configuredNames.has('ollama')) {
+                  items.push({ label: t('wiz.provider.section.local'), value: '', section: true });
+                  items.push({
+                    label: ollamaPreset.name,
+                    value: '__preset__ollama',
+                    detail: t('wiz.provider.ollamaDetail'),
+                  });
+                }
+
+                // Custom provider
+                items.push({ label: t('wiz.provider.custom'), value: '__add__' });
+                items.push({
+                  label: step.scope === 'global' ? t('set.providers.back') : t('sset.providers.back'),
+                  value: '__back__',
+                });
+
+                return items;
+              })()}
               onSelect={(v) => {
                 if (v === '__back__') return setStep({ id: 'root' });
                 if (v === '__add__') {
                   setReturnStep({ id: 'providers', scope: step.scope });
                   return setStep({ id: 'newName' });
                 }
+
+                // Preset selection (e.g. __preset__Anthropic)
+                if (v.startsWith('__preset__')) {
+                  const presetName = v.slice('__preset__'.length);
+                  const preset = PROVIDER_PRESETS.find((p) => p.name === presetName);
+                  if (!preset) return;
+
+                  if (presetName.toLowerCase() === 'ollama') {
+                    ctl.saveProvider({ ...preset, apiKey: 'ollama-local' });
+                    saved();
+                    return;
+                  }
+
+                  // Cloud preset: ask for API key, then save and return to providers
+                  setReturnStep({ id: 'providers', scope: step.scope });
+                  return setStep({ id: 'key', provider: { ...preset } });
+                }
+
+                // Existing configured provider
                 const p = cfg.providers.find((x) => x.name === v);
                 if (!p) return;
                 if (step.scope === 'session') {
-                  // Session scope: pick a model for this session
                   setReturnStep({ id: 'root' });
                   setStep({ id: 'model', provider: p });
                 } else {
-                  // Global scope: go to provider detail
                   setStep({ id: 'providerDetail', provider: p, scope: 'global' });
                 }
               }}
