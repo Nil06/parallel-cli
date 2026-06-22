@@ -12,6 +12,9 @@ dist/
 # Session data (local)
 .parallel/
 
+# Documentation (local, not pushed)
+docs/
+
 # Tests (local only, not pushed)
 test/
 
