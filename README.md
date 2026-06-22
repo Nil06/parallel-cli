@@ -282,23 +282,46 @@ Headless mode:
 
 When there is exactly one agent, commands such as `/undo`, `/focus`, `/pause`, `/resume`, `/stop`, and `/commit` can omit the agent name.
 
-## Providers
+### Providers
 
-Parallel ships with **17 pre-configured cloud providers** with verified endpoints and curated model lists, plus **Ollama** for local models with automatic model detection. All providers use OpenAI-compatible chat completions with tool calling. You can also add any custom OpenAI-compatible endpoint.
+Parallel is provider-agnostic. It ships with **18 pre-configured presets** — 17 cloud providers + Ollama for local models — all with verified endpoints and curated model lists:
 
-The built-in DeepSeek preset works out of the box once an API key is configured. Additional providers like xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, and SambaNova are available for selection during setup or from the Providers settings submenu.
+| Provider | Default model | Notes |
+|----------|--------------|-------|
+| OpenAI | gpt-4o | |
+| Anthropic | claude-sonnet-4-6 | |
+| DeepSeek | deepseek-v4-flash | |
+| OpenRouter | openai/gpt-4o | Multi-provider gateway |
+| Gemini | gemini-3.5-flash | |
+| Mistral | mistral-large-latest | |
+| Groq | llama-3.3-70b-versatile | Fast inference |
+| Together | openai/gpt-oss-120b | |
+| xAI | grok-3-beta | |
+| Perplexity | sonar-pro | |
+| Cohere | command-a | |
+| DeepInfra | meta-llama/llama-4-maverick | |
+| Fireworks | llama-4-maverick | |
+| Cerebras | llama-3.3-70b | Fast inference |
+| Novita | deepseek-v3 | |
+| Hyperbolic | deepseek-v3 | |
+| SambaNova | llama-4-maverick | |
+| Ollama | llama3 | Local, no API key needed |
 
-Environment variables:
+All providers use OpenAI-compatible chat completions with tool calling. Any provider can be set as the default.
+
+**Custom providers:** You can add any OpenAI-compatible endpoint — name, URL, model ID, and API key.
+
+**Environment variables** (for headless / CI use):
 
 | Variable | Purpose |
-| --- | --- |
-| `DEEPSEEK_API_KEY` | API key for the built-in DeepSeek provider. |
-| `PARALLEL_API_KEY` | Generic fallback API key. |
-| `PARALLEL_BASE_URL` | Override the provider base URL. |
-| `PARALLEL_MODEL` | Override the session model. |
-| `PARALLEL_NO_ALT_SCREEN=1` | Disable the alternate terminal screen. |
+|----------|---------|
+| `PARALLEL_API_KEY` | API key for the default provider |
+| `DEEPSEEK_API_KEY` | API key for the DeepSeek provider (fallback) |
+| `PARALLEL_BASE_URL` | Override the default provider's base URL |
+| `PARALLEL_MODEL` | Override the session model |
+| `PARALLEL_NO_ALT_SCREEN=1` | Disable the alternate terminal screen |
 
-Configuration is stored in `~/.parallel/config.json`. Project state, sessions, skills, specialists, and memory are stored under `.parallel/` in the selected project.
+Configuration is stored in `~/.parallel/config.json`. Project state, sessions, skills, specialists, and memory are stored under `.parallel/` in the selected project directory.
 
 ## Skills And Specialists
 
