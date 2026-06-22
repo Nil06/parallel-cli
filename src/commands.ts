@@ -45,7 +45,6 @@ export const COMMANDS: CommandDef[] = [
   // create agents
   { name: '/ask', args: '[Name:] <question> [--model=m]', descKey: 'cmd.ask', group: 'modes', aliases: ['/a'] },
   { name: '/task', args: '[Name:] <task> [--model=m] [#skill]', descKey: 'cmd.task', group: 'modes', aliases: ['/t'] },
-  { name: '/spawn', args: '[Name:] <task> [--model=m] [#skill]', descKey: 'cmd.spawn', group: 'modes', hidden: true },
   { name: '/plan', args: '[Name:] <task> [--model=m]', descKey: 'cmd.plan', group: 'modes', aliases: ['/p'] },
   { name: '/issue', args: '<n>', descKey: 'cmd.issue', group: 'git' },
   { name: '/specialist', args: '<name> <task> | new <name> [global]', descKey: 'cmd.specialist', group: 'modes' },
@@ -125,9 +124,9 @@ function spawnFrom(
   mode: AgentMode = 'task',
 ): void {
   const p = ctl.sessionProvider();
-  if (!p) return ui.system(t('m.missingProvider'));
-  if (!p.apiKey) return ui.system(t('m.missingKey', { name: p.name }));
-  if (!ctl.session.model && !p.defaultModel && !p.models[0]) return ui.system(t('m.missingModel', { name: p.name }));
+  if (!p) return ui.system(t('m.missingProvider'), 'error');
+  if (!p.apiKey) return ui.system(t('m.missingKey', { name: p.name }), 'error');
+  if (!ctl.session.model && !p.defaultModel && !p.models[0]) return ui.system(t('m.missingModel', { name: p.name }), 'error');
   // optional --model=xxx flag
   let model: string | undefined;
   let task = arg;
@@ -154,12 +153,13 @@ function spawnFrom(
   const named = task.match(/^([\p{L}\p{N}_-]{1,16}):\s+(.+)$/su);
   const finalTask = named ? named[2] : task;
   const agent = ctl.spawnAgent(finalTask, named ? named[1] : undefined, model, images, specialist, undefined, mode);
-  if (!agent) return ui.system(specialist ? t('m.noSpecialist', { name: specialist }) : t('m.spawnFail'));
+  if (!agent) return ui.system(specialist ? t('m.noSpecialist', { name: specialist }) : t('m.spawnFail'), 'error');
   ui.system(
     t('m.spawned', { name: agent.name, model: model ? ` (${model})` : '' }) +
       ` /${mode}` +
       (specialist ? ` 🎓${specialist}` : '') +
       (forced.length > 0 ? ` 🧩${forced.join(',')}` : ''),
+    'info',
   );
 }
 
@@ -169,17 +169,17 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
 
   // "@Agent message" or "@all message" → live instruction
   if (input.startsWith('@')) {
-    if (images?.length) ui.system(t('m.imagesIgnored'));
+    if (images?.length) ui.system(t('m.imagesIgnored'), 'warn');
     const m = input.match(/^@(\S+)\s+(.+)$/s);
-    if (!m) return ui.system(t('m.usageAt'));
+    if (!m) return ui.system(t('m.usageAt'), 'warn');
     const [, target, content] = m;
     if (target.toLowerCase() === 'all') {
       ctl.broadcast(content);
-      ui.system(t('m.broadcast'));
+      ui.system(t('m.broadcast'), 'ok');
     } else if (ctl.sendToAgent(target, content)) {
-      ui.system(t('m.sent', { target }));
+      ui.system(t('m.sent', { target }), 'ok');
     } else {
-      ui.system(t('m.notFound', { target, list: agentList(ctl) }));
+      ui.system(t('m.notFound', { target, list: agentList(ctl) }), 'error');
     }
     return;
   }
@@ -190,7 +190,7 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     return;
   }
 
-  if (images?.length) ui.system(t('m.imagesIgnored'));
+  if (images?.length) ui.system(t('m.imagesIgnored'), 'warn');
   const [rawCmd, ...rest] = input.split(/\s+/);
   const cmd =
     rawCmd.toLowerCase() === '/a'
@@ -208,24 +208,19 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
 
   switch (cmd.toLowerCase()) {
     case '/ask': {
-      if (!arg) return ui.system(t('m.usageAsk'));
+      if (!arg) return ui.system(t('m.usageAsk'), 'warn');
       spawnFrom(arg, ctl, ui, images, undefined, 'ask');
       return;
     }
     case '/task': {
-      if (!arg) return ui.system(t('m.usageSpawn'));
-      spawnFrom(arg, ctl, ui, images, undefined, 'task');
-      return;
-    }
-    case '/spawn': {
-      if (!arg) return ui.system(t('m.usageSpawn'));
+      if (!arg) return ui.system(t('m.usageSpawn'), 'warn');
       spawnFrom(arg, ctl, ui, images, undefined, 'task');
       return;
     }
     case '/plan': {
       // Plan-first agent: presents its plan (ask_user) and waits for approval
       // before touching any file.
-      if (!arg) return ui.system(t('m.usagePlan'));
+      if (!arg) return ui.system(t('m.usagePlan'), 'warn');
       spawnFrom(arg, ctl, ui, images, undefined, 'plan');
       return;
     }
@@ -235,39 +230,39 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       if (!arg || Number.isNaN(n)) return ui.system(t('m.usageIssue'));
       const issue = ctl.fetchIssue(n);
       if ('error' in issue) {
-        return ui.system(issue.error === 'gh-missing' ? t('m.ghMissing') : t('m.issueFail', { msg: issue.error }));
+        return ui.system(issue.error === 'gh-missing' ? t('m.ghMissing') : t('m.issueFail', { msg: issue.error }), 'error');
       }
       const task = `GitHub issue #${issue.number}: ${issue.title}\n\n${issue.body || '(no description)'}\n\nResolve this issue.`;
       const agent = ctl.spawnAgent(task);
-      if (!agent) return ui.system(t('m.spawnFail'));
-      ui.system(t('m.issueSpawned', { n: String(issue.number), name: agent.name, title: issue.title.slice(0, 60) }));
+      if (!agent) return ui.system(t('m.spawnFail'), 'error');
+      ui.system(t('m.issueSpawned', { n: String(issue.number), name: agent.name, title: issue.title.slice(0, 60) }), 'info');
       return;
     }
     case '/undo': {
       // Revert the agent's LAST file change (blackboard checkpoint).
       const who = arg || soloAgent(ctl);
-      if (!who) return ui.system(t('m.usageUndo'));
+      if (!who) return ui.system(t('m.usageUndo'), 'warn');
       const r = ctl.undoAgent(who);
-      if (r === null) return ui.system(t('m.notFound', { target: who, list: agentList(ctl) }));
-      if (r === 'none') return ui.system(t('m.undoNone', { name: who }));
-      ui.system(t('m.undone', { name: who, path: r.path }) + (r.conflict ? ' ' + t('m.undoConflict') : ''));
+      if (r === null) return ui.system(t('m.notFound', { target: who, list: agentList(ctl) }), 'error');
+      if (r === 'none') return ui.system(t('m.undoNone', { name: who }), 'info');
+      ui.system(t('m.undone', { name: who, path: r.path }) + (r.conflict ? ' ' + t('m.undoConflict') : ''), r.conflict ? 'warn' : 'ok');
       return;
     }
     case '/commit': {
       // Commit the files touched by one agent (or all) — staged by explicit path.
       const [target0, ...msg] = rest;
       const target = target0 || soloAgent(ctl);
-      if (!target) return ui.system(t('m.usageCommit'));
+      if (!target) return ui.system(t('m.usageCommit'), 'warn');
       const r = ctl.commitFor(target, msg.join(' ').trim() || undefined);
-      if (r.ok) return ui.system(t('m.committed', { name: target, files: String(r.files) }));
-      if (r.reason === 'not-found') return ui.system(t('m.notFound', { target, list: agentList(ctl) }));
-      if (r.reason === 'no-changes') return ui.system(t('m.commitNone', { name: target }));
-      return ui.system(t('m.commitFail', { msg: r.detail ?? '' }));
+      if (r.ok) return ui.system(t('m.committed', { name: target, files: String(r.files) }), 'ok');
+      if (r.reason === 'not-found') return ui.system(t('m.notFound', { target, list: agentList(ctl) }), 'error');
+      if (r.reason === 'no-changes') return ui.system(t('m.commitNone', { name: target }), 'info');
+      return ui.system(t('m.commitFail', { msg: r.detail ?? '' }), 'error');
     }
     case '/autocommit': {
-      if (arg !== 'on' && arg !== 'off') return ui.system(t('m.usageAutocommit', { state: ctl.autoCommit ? 'on' : 'off' }));
+      if (arg !== 'on' && arg !== 'off') return ui.system(t('m.usageAutocommit', { state: ctl.autoCommit ? 'on' : 'off' }), 'warn');
       ctl.autoCommit = arg === 'on';
-      ui.system(t('m.autocommit', { state: arg }));
+      ui.system(t('m.autocommit', { state: arg }), 'info');
       return;
     }
     case '/agents':
@@ -284,58 +279,59 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
         return;
       }
       const sessions = Controller.listSessions(ctl.projectRoot);
-      if (sessions.length === 0) return ui.system(t('m.usageSession'));
+      if (sessions.length === 0) return ui.system(t('m.usageSession'), 'warn');
       const idx = arg.toLowerCase() === 'latest' ? 0 : Number.parseInt(arg, 10) - 1;
       const session = sessions[idx];
-      if (!session) return ui.system(t('m.usageSession'));
+      if (!session) return ui.system(t('m.usageSession'), 'warn');
       ctl.loadSession(session.data);
-      ui.system(t('m.sessionLoaded', { date: new Date(session.data.savedAt).toLocaleString() }));
+      ui.system(t('m.sessionLoaded', { date: new Date(session.data.savedAt).toLocaleString() }), 'ok');
       return;
     }
     case '/restore': {
       // Relaunch an agent from the restored session with its FULL conversation.
-      if (!arg) return ui.system(t('m.usageRestore'));
-      if (!ctl.loadedSession) return ui.system(t('m.usageSession'));
+      if (!arg) return ui.system(t('m.usageRestore'), 'warn');
+      if (!ctl.loadedSession) return ui.system(t('m.usageSession'), 'warn');
       const res = ctl.respawnAgent(arg);
-      if (res === 'no-conversation') return ui.system(t('m.noConversation', { name: arg }));
-      if (!res) return ui.system(t('m.spawnFail'));
-      ui.system(t('m.restored', { name: res.name }));
+      if (res === 'no-conversation') return ui.system(t('m.noConversation', { name: arg }), 'error');
+      if (!res) return ui.system(t('m.spawnFail'), 'error');
+      ui.system(t('m.restored', { name: res.name }), 'ok');
       return;
     }
     case '/attach': {
       // Multi-terminal: open (or toggle the auto-opening of) a dedicated
       // terminal per agent, connected to this session.
       const who = arg || soloAgent(ctl);
-      if (!who) return ui.system(t('m.usageAttach', { state: ctl.autoAttach ? 'on' : 'off' }));
+      if (!who) return ui.system(t('m.usageAttach', { state: ctl.autoAttach ? 'on' : 'off' }), 'warn');
       if (who === 'on' || who === 'off') {
         ctl.autoAttach = who === 'on';
-        ui.system(t('m.attachAuto', { state: who }));
+        ui.system(t('m.attachAuto', { state: who }), 'info');
         return;
       }
       const a = ctl.board.getAgentByName(who);
-      if (!a) return ui.system(t('m.notFound', { target: who, list: agentList(ctl) }));
-      if (!ctl.attachEnabled) return ui.system(t('m.attachManual', { cmd: `parallel attach ${a.alias}` }));
+      if (!a) return ui.system(t('m.notFound', { target: who, list: agentList(ctl) }), 'error');
+      if (!ctl.attachEnabled) return ui.system(t('m.attachManual', { cmd: `parallel attach ${a.alias}` }), 'warn');
       const r = ctl.openTerminal(a.alias);
       ui.system(
         r === 'opened'
           ? t('m.attachOpened', { name: a.name })
           : t('m.attachManual', { cmd: `parallel attach ${a.alias}` }),
+        r === 'opened' ? 'ok' : 'warn',
       );
       return;
     }
     case '/focus': {
       const who = arg || soloAgent(ctl);
-      if (!who) return ui.system(t('m.usageFocus'));
+      if (!who) return ui.system(t('m.usageFocus'), 'warn');
       if (!ui.setFocus) return;
       if (who.toLowerCase() === 'off') {
         ui.setFocus(null);
-        ui.system(t('m.focusOff'));
+        ui.system(t('m.focusOff'), 'info');
         return;
       }
       const a = ctl.board.getAgentByName(who);
-      if (!a) return ui.system(t('m.notFound', { target: who, list: agentList(ctl) }));
+      if (!a) return ui.system(t('m.notFound', { target: who, list: agentList(ctl) }), 'error');
       ui.setFocus(a.name);
-      ui.system(t('m.focusOn', { name: a.name }));
+      ui.system(t('m.focusOn', { name: a.name }), 'ok');
       return;
     }
     case '/doctor': {
@@ -378,35 +374,35 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     case '/skill': {
       // /skill new <name> [global] → create a template file to edit
       const m = arg.match(/^new\s+([\p{L}\p{N}_-]+)(\s+global)?$/iu);
-      if (!m) return ui.system(t('m.usageSkill'));
+      if (!m) return ui.system(t('m.usageSkill'), 'warn');
       try {
         const file = createSkillTemplate(m[1], '', m[2] ? 'global' : 'project', ctl.projectRoot);
-        ui.system(t('m.skillCreated', { file }));
+        ui.system(t('m.skillCreated', { file }), 'ok');
       } catch (e: any) {
-        ui.system(t('m.alreadyExists', { msg: e?.message ?? '' }));
+        ui.system(t('m.alreadyExists', { msg: e?.message ?? '' }), 'error');
       }
       return;
     }
     case '/specialist': {
-      if (!arg) return ui.system(t('m.usageSpecialist'));
+      if (!arg) return ui.system(t('m.usageSpecialist'), 'warn');
       // /specialist new <name> [global] → create a template file
       const created = arg.match(/^new\s+([\p{L}\p{N}_-]+)(\s+global)?$/iu);
       if (created) {
         try {
           const file = createSpecialistTemplate(created[1], '', created[2] ? 'global' : 'project', ctl.projectRoot);
-          ui.system(t('m.specCreated', { file }));
+          ui.system(t('m.specCreated', { file }), 'ok');
         } catch (e: any) {
-          ui.system(t('m.alreadyExists', { msg: e?.message ?? '' }));
+          ui.system(t('m.alreadyExists', { msg: e?.message ?? '' }), 'error');
         }
         return;
       }
       // /specialist <name> [Name:] <task> → spawn an agent with this persona
       const m = arg.match(/^([\p{L}\p{N}_-]+)\s+(.+)$/su);
-      if (!m) return ui.system(t('m.usageSpecialist'));
+      if (!m) return ui.system(t('m.usageSpecialist'), 'warn');
       const exists = ctl.getSpecialists().some((s) => s.name === m[1].toLowerCase());
       if (!exists) {
         const list = ctl.getSpecialists().map((s) => s.name).join(', ') || t('m.none');
-        return ui.system(t('m.noSpecialist', { name: m[1] }) + ` (${list})`);
+        return ui.system(t('m.noSpecialist', { name: m[1] }) + ` (${list})`, 'error');
       }
       spawnFrom(m[2], ctl, ui, images, m[1].toLowerCase(), 'task');
       return;
@@ -423,40 +419,46 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     case '/send': {
       const [target, ...msg] = rest;
       const content = msg.join(' ').trim();
-      if (!target || !content) return ui.system(t('m.usageSend'));
+      if (!target || !content) return ui.system(t('m.usageSend'), 'warn');
       executeInput(`@${target} ${content}`, ctl, ui);
       return;
     }
     case '/pause': {
       const who = arg || soloAgent(ctl);
-      if (!who) return ui.system(t('m.usagePause'));
+      if (!who) return ui.system(t('m.usagePause'), 'warn');
       if (who === 'all') {
         for (const a of ctl.board.agents.values()) ctl.pauseAgent(a.name);
-        ui.system(t('m.allPaused'));
+        ui.system(t('m.allPaused'), 'ok');
       } else {
-        ui.system(ctl.pauseAgent(who) ? t('m.paused', { name: who }) : t('m.notFound', { target: who, list: agentList(ctl) }));
+        const ok = ctl.pauseAgent(who);
+        ui.system(
+          ok ? t('m.paused', { name: who }) : t('m.notFound', { target: who, list: agentList(ctl) }),
+          ok ? 'ok' : 'error',
+        );
       }
       return;
     }
     case '/resume': {
       const who = arg || soloAgent(ctl);
-      if (!who) return ui.system(t('m.usageResume'));
+      if (!who) return ui.system(t('m.usageResume'), 'warn');
       if (who === 'all') {
         for (const a of ctl.board.agents.values()) ctl.resumeAgent(a.name);
-        ui.system(t('m.allResumed'));
+        ui.system(t('m.allResumed'), 'ok');
       } else {
-        ui.system(ctl.resumeAgent(who) ? t('m.resumed', { name: who }) : t('m.notFound', { target: who, list: agentList(ctl) }));
+        const ok = ctl.resumeAgent(who);
+        ui.system(ok ? t('m.resumed', { name: who }) : t('m.notFound', { target: who, list: agentList(ctl) }), ok ? 'ok' : 'error');
       }
       return;
     }
     case '/stop': {
       const who = arg || soloAgent(ctl);
-      if (!who) return ui.system(t('m.usageStop'));
+      if (!who) return ui.system(t('m.usageStop'), 'warn');
       if (who === 'all') {
         ctl.stopAll();
-        ui.system(t('m.allStopped'));
+        ui.system(t('m.allStopped'), 'ok');
       } else {
-        ui.system(ctl.stopAgent(who) ? t('m.stopped', { name: who }) : t('m.notFound', { target: who, list: agentList(ctl) }));
+        const ok = ctl.stopAgent(who);
+        ui.system(ok ? t('m.stopped', { name: who }) : t('m.notFound', { target: who, list: agentList(ctl) }), ok ? 'ok' : 'error');
       }
       return;
     }
@@ -464,14 +466,14 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     case '/model': {
       if (!arg) {
         const p = ctl.sessionProvider();
-        return ui.system(t('m.model', { pm: p ? `${p.name}:${ctl.session.model}` : '—' }));
+        return ui.system(t('m.model', { pm: p ? `${p.name}:${ctl.session.model}` : '—' }), 'info');
       }
       const r = ctl.setSessionModel(arg);
       if (!r) {
         const provName = arg.includes(':') ? arg.split(':')[0] : arg;
-        return ui.system(t('m.noProvider', { name: provName, list: ctl.config.providers.map((p) => p.name).join(', ') || t('m.none') }));
+        return ui.system(t('m.noProvider', { name: provName, list: ctl.config.providers.map((p) => p.name).join(', ') || t('m.none') }), 'error');
       }
-      ui.system(t('m.modelSet', { pm: `${r.provider}:${r.model}` }));
+      ui.system(t('m.modelSet', { pm: `${r.provider}:${r.model}` }), 'ok');
       return;
     }
     case '/settings':
@@ -483,27 +485,28 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     // SESSION-only approvals & sound (global defaults editable in /settings).
     case '/approvals': {
       const mode = normalizeShellApprovalMode(arg);
-      if (!mode) return ui.system(t('m.usageApprovals'));
+      if (!mode) return ui.system(t('m.usageApprovals'), 'warn');
       ctl.setSessionApprovalMode(mode);
-      ui.system(t('m.approvals', { mode }) + (mode === 'auto-safe' ? t('m.approvalsWarn') : mode === 'yolo' ? t('m.approvalsYoloWarn') : ''));
+      const approvalLevel: SystemLevel = mode === 'yolo' ? 'warn' : 'ok';
+      ui.system(t('m.approvals', { mode }) + (mode === 'auto-safe' ? t('m.approvalsWarn') : mode === 'yolo' ? t('m.approvalsYoloWarn') : ''), approvalLevel);
       return;
     }
     case '/sound': {
       if (arg !== 'on' && arg !== 'off')
-        return ui.system(t('m.usageSound', { state: ctl.session.soundEnabled ? 'on' : 'off' }));
+        return ui.system(t('m.usageSound', { state: ctl.session.soundEnabled ? 'on' : 'off' }), 'warn');
       ctl.setSessionSound(arg === 'on');
-      ui.system(t('m.sound', { state: arg }));
+      ui.system(t('m.sound', { state: arg }), 'ok');
       return;
     }
     case '/save': {
       const file = ctl.saveSession(arg || undefined);
-      ui.system(file ? (arg ? t('m.savedAs', { name: arg }) : t('m.saved')) : t('m.nothing'));
+      ui.system(file ? (arg ? t('m.savedAs', { name: arg }) : t('m.saved')) : t('m.nothing'), file ? 'ok' : 'warn');
       return;
     }
     case '/key': {
-      if (!arg) return ui.system(t('m.usageKey'));
+      if (!arg) return ui.system(t('m.usageKey'), 'warn');
       const ok = ctl.setApiKey(arg);
-      ui.system(ok ? t('m.keySaved', { name: ctl.sessionProvider()?.name ?? '?' }) : t('m.spawnFail'));
+      ui.system(ok ? t('m.keySaved', { name: ctl.sessionProvider()?.name ?? '?' }) : t('m.spawnFail'), ok ? 'ok' : 'error');
       return;
     }
     case '/clear': {
@@ -528,6 +531,6 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       ui.exit();
       return;
     default:
-      ui.system(t('m.unknown', { cmd }));
+      ui.system(t('m.unknown', { cmd }), 'error');
   }
 }

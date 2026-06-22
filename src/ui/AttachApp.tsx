@@ -67,7 +67,7 @@ export function parseAttachCommand(text: string): AttachCommand | null {
   if (!v) return null;
   if (v === '/quit' || v === '/exit' || v === '/detach') return { type: 'detach' };
   if (v === '/raw') return { type: 'raw' };
-  const m = v.match(/^\/(ask|a|task|t|plan|p|spawn)\s+(.+)$/s);
+  const m = v.match(/^\/(ask|a|task|t|plan|p)\s+(.+)$/s);
   if (m) {
     const mode: AgentMode = m[1] === 'ask' || m[1] === 'a' ? 'ask' : m[1] === 'plan' || m[1] === 'p' ? 'plan' : 'task';
     return { type: 'spawn', text: m[2].trim(), mode };
@@ -162,8 +162,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
       setRaw((r) => !r);
       return;
     }
-    // /task|/ask|/plan <text> — launch agent N+1 from this terminal; /spawn
-    // remains accepted only as a compatibility alias for task mode.
+    // /task|/ask|/plan <text> — launch agent N+1 from this terminal.
     if (cmd.type === 'spawn') {
       wire({ type: 'spawn', text: cmd.text, mode: cmd.mode });
       return;
