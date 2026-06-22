@@ -34,7 +34,7 @@ The philosophy is simple: agents can move in parallel, but the human keeps the c
 - Avoid silent overwrites with adaptive merge-on-write for file edits.
 - Pause, resume, stop, focus, restore, and steer agents while they are running.
 - Review live diffs, notes, costs, sessions, skills, and specialists from built-in views.
-- Use any OpenAI-compatible provider — 17 pre-configured cloud providers (DeepSeek, xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, SambaNova, and more), plus Ollama for local models, and any custom OpenAI-compatible endpoint.
+- Use any OpenAI-compatible provider — 29 pre-configured providers across 5 categories (Western, Chinese, Gateways, Inference, and Local), with verified endpoints and curated model lists for each, plus any custom OpenAI-compatible endpoint.
 - Choose shell approval behavior: `ask`, `auto-safe`, or `yolo`.
 - Track token usage and estimated cost per agent and per session.
 
@@ -284,28 +284,61 @@ When there is exactly one agent, commands such as `/undo`, `/focus`, `/pause`, `
 
 ### Providers
 
-Parallel is provider-agnostic. It ships with **18 pre-configured presets** — 17 cloud providers + Ollama for local models — all with verified endpoints and curated model lists:
+Parallel is provider-agnostic. It ships with **29 pre-configured providers** organized in 5 categories — all with verified endpoints and curated model lists:
 
-| Provider | Default model | Notes |
-|----------|--------------|-------|
-| OpenAI | gpt-4o | |
-| Anthropic | claude-sonnet-4-6 | |
-| DeepSeek | deepseek-v4-flash | |
-| OpenRouter | openai/gpt-4o | Multi-provider gateway |
-| Gemini | gemini-3.5-flash | |
-| Mistral | mistral-large-latest | |
-| Groq | llama-3.3-70b-versatile | Fast inference |
-| Together | openai/gpt-oss-120b | |
-| xAI | grok-3-beta | |
-| Perplexity | sonar-pro | |
-| Cohere | command-a | |
-| DeepInfra | meta-llama/llama-4-maverick | |
-| Fireworks | llama-4-maverick | |
-| Cerebras | llama-3.3-70b | Fast inference |
-| Novita | deepseek-v3 | |
-| Hyperbolic | deepseek-v3 | |
-| SambaNova | llama-4-maverick | |
-| Ollama | llama3 | Local, no API key needed |
+#### 🇺🇸 Western
+
+| Provider | Endpoint | Default Model | Models |
+|----------|----------|---------------|--------|
+| OpenAI | `api.openai.com` | `gpt-4o-mini` | 13 |
+| Anthropic | `api.anthropic.com` | `claude-sonnet-4` | 5 |
+| Google Gemini | `generativelanguage.googleapis.com` | `gemini-2.5-flash` | 5 |
+| xAI Grok | `api.x.ai` | `grok-3-mini` | 4 |
+| Mistral | `api.mistral.ai` | `mistral-large` | 8 |
+| Cohere | `api.cohere.com` | `command-a` | 7 |
+| Perplexity | `api.perplexity.ai` | `sonar` | 5 |
+
+#### 🇨🇳 Chinese
+
+| Provider | Endpoint | Default Model | Models |
+|----------|----------|---------------|--------|
+| DeepSeek | `api.deepseek.com` | `deepseek-chat` | 2 |
+| MiniMax | `api.minimax.io` | `minimax-m1` | 5 |
+| Z.ai / GLM | `open.bigmodel.cn` | `glm-4.5` | 7 |
+| Alibaba / Qwen | `dashscope.aliyuncs.com` | `qwen3-max` | 8 |
+| Moonshot / Kimi | `api.moonshot.cn` | `kimi-k2` | 5 |
+| Xiaomi / MiMo | `api.minimaxi.com` | `mimo-pro` | 4 |
+| StepFun | `api.stepfun.com` | `step-3` | 6 |
+
+#### 🌐 Gateways
+
+| Provider | Endpoint | Default Model | Models |
+|----------|----------|---------------|--------|
+| OpenRouter | `openrouter.ai` | `gpt-4o` | 6 |
+| SiliconFlow | `api.siliconflow.cn` | `DeepSeek-V3` | 6 |
+| Atlas Cloud | `api.atlascloud.ai` | `deepseek-v3` | 6 |
+| Requesty | `api.requesty.ai` | `gpt-4o` | 6 |
+| Vercel AI Gateway | `api.vercel.ai` | `gpt-4o` | 5 |
+
+#### ⚡ Inference
+
+| Provider | Endpoint | Default Model | Models |
+|----------|----------|---------------|--------|
+| Groq | `api.groq.com` | `llama-4-scout` | 6 |
+| Cerebras | `api.cerebras.ai` | `llama-4-scout` | 5 |
+| Together AI | `api.together.xyz` | `llama-4-maverick` | 6 |
+| Fireworks | `api.fireworks.ai` | `llama4-maverick` | 5 |
+| DeepInfra | `api.deepinfra.com` | `llama-4-maverick` | 6 |
+| Novita | `api.novita.ai` | `llama-4-maverick` | 5 |
+| Hyperbolic | `api.hyperbolic.ai` | `llama-4-maverick` | 6 |
+| SambaNova | `api.sambanova.ai` | `llama-4-maverick` | 5 |
+
+#### 🏠 Local
+
+| Provider | Endpoint | Default Model | Models |
+|----------|----------|---------------|--------|
+| Ollama | `localhost:11434` | `llama3.2` | 8 |
+| vLLM / SGLang | `localhost:8000` | — | 1 (placeholder) |
 
 All providers use OpenAI-compatible chat completions with tool calling. Any provider can be set as the default.
 
@@ -373,6 +406,14 @@ The runtime is intentionally small:
 - `src/config.ts` and `src/i18n.ts`: provider/session config and translations.
 
 ## Changelog
+
+### v0.4.2 — Provider catalog expansion
+
+- 29 pre-configured providers (+11 new: MiniMax, Z.ai/GLM, Alibaba/Qwen, Moonshot/Kimi, Xiaomi/MiMo, StepFun, SiliconFlow, Atlas Cloud, Requesty, Vercel AI Gateway, vLLM/SGLang)
+- Providers organized in 5 categories (Western, Chinese, Gateways, Inference, Local)
+- `category` field added to ProviderConfig for clean UI grouping
+- Emoji-prefixed section headers in Wizard and Settings
+- ~120 model pricing entries
 
 ### 0.4.1
 

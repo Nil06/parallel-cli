@@ -118,6 +118,8 @@ export interface ProviderConfig {
   defaultModel: string;
   /** USD per 1M tokens, per model — overrides the built-in pricing table. */
   prices?: Record<string, ModelPrice>;
+  /** Category for grouping in UI (western, chinese, gateways, inference, local) */
+  category?: string;
 }
 
 /** Pricing of a model in USD per 1 million tokens. */

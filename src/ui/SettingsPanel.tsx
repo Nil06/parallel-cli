@@ -456,30 +456,35 @@ export function SettingsPanel({
                   }
                 }
 
-                // Section: Cloud Providers — presets not yet configured, exclude Ollama
-                const cloudPresets = PROVIDER_PRESETS.filter(
-                  (p) => p.name.toLowerCase() !== 'ollama' && !configuredNames.has(p.name.toLowerCase()),
-                );
-                if (cloudPresets.length > 0) {
-                  items.push({ label: t('wiz.provider.section.cloud'), value: '', section: true });
-                  for (const p of cloudPresets) {
+                // Sections per category: western, chinese, gateways, inference, local
+                const catOrder = ['western', 'chinese', 'gateways', 'inference', 'local'] as const;
+                const emoji: Record<string, string> = {
+                  western: '\u{1F1FA}\u{1F1F8} ',
+                  chinese: '\u{1F1E8}\u{1F1F3} ',
+                  gateways: '\u{1F310} ',
+                  inference: '\u26A1 ',
+                  local: '\u{1F3E0} ',
+                };
+
+                for (const cat of catOrder) {
+                  const presetsInCat = PROVIDER_PRESETS.filter(
+                    (p) => p.category === cat && !configuredNames.has(p.name.toLowerCase()),
+                  );
+                  if (presetsInCat.length === 0) continue;
+                  const key = `wiz.provider.section.${cat}`;
+                  const sectionLabel = emoji[cat] + t(key);
+                  items.push({ value: '', label: sectionLabel, section: true });
+                  for (const preset of presetsInCat) {
+                    const detail =
+                      preset.models.length > 0
+                        ? `${preset.models.length} model${preset.models.length > 1 ? 's' : ''}`
+                        : undefined;
                     items.push({
-                      label: p.name,
-                      value: `__preset__${p.name}`,
-                      detail: p.defaultModel,
+                      label: preset.name,
+                      value: `__preset__${preset.name}`,
+                      detail,
                     });
                   }
-                }
-
-                // Section: Local
-                const ollamaPreset = PROVIDER_PRESETS.find((p) => p.name.toLowerCase() === 'ollama');
-                if (ollamaPreset && !configuredNames.has('ollama')) {
-                  items.push({ label: t('wiz.provider.section.local'), value: '', section: true });
-                  items.push({
-                    label: ollamaPreset.name,
-                    value: '__preset__ollama',
-                    detail: t('wiz.provider.ollamaDetail'),
-                  });
                 }
 
                 // Custom provider

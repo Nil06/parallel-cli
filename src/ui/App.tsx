@@ -342,49 +342,51 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
               <SelectList
                 items={(() => {
                   const items: SelectItem[] = [];
+                  const configuredNames = new Set(config.providers.map((p) => p.name.toLowerCase()));
+
                   // Section: Configured
-                  const configured = config.providers.map(
-                    (p): SelectItem => ({
-                      label: p.name,
-                      value: p.name,
-                      detail: p.apiKey ? undefined : t('wiz.provider.needsKey'),
-                    }),
-                  );
-                  if (configured.length > 0) {
+                  if (config.providers.length > 0) {
                     items.push({ label: t('wiz.provider.section.configured'), value: '', section: true });
-                    items.push(...configured);
+                    for (const p of config.providers) {
+                      items.push({
+                        label: p.name,
+                        value: p.name,
+                        detail: p.apiKey ? undefined : t('wiz.provider.needsKey'),
+                      });
+                    }
                   }
-                  // Section: Cloud Providers (presets except Ollama, not already configured)
-                  const cloudPresets = PROVIDER_PRESETS.filter(
-                    (preset) =>
-                      preset.name !== 'Ollama' &&
-                      !config.providers.some((p) => p.name.toLowerCase() === preset.name.toLowerCase()),
-                  );
-                  if (cloudPresets.length > 0) {
-                    items.push({ label: t('wiz.provider.section.cloud'), value: '', section: true });
-                    items.push(
-                      ...cloudPresets.map(
-                        (preset): SelectItem => ({
-                          label: preset.name,
-                          value: preset.name,
-                          detail: preset.defaultModel,
-                        }),
-                      ),
+
+                  // Sections per category: western, chinese, gateways, inference, local
+                  const catOrder = ['western', 'chinese', 'gateways', 'inference', 'local'] as const;
+                  const emoji: Record<string, string> = {
+                    western: '\u{1F1FA}\u{1F1F8} ',
+                    chinese: '\u{1F1E8}\u{1F1F3} ',
+                    gateways: '\u{1F310} ',
+                    inference: '\u26A1 ',
+                    local: '\u{1F3E0} ',
+                  };
+
+                  for (const cat of catOrder) {
+                    const presetsInCat = PROVIDER_PRESETS.filter(
+                      (p) => p.category === cat && !configuredNames.has(p.name.toLowerCase()),
                     );
+                    if (presetsInCat.length === 0) continue;
+                    const key = `wiz.provider.section.${cat}`;
+                    const sectionLabel = emoji[cat] + t(key);
+                    items.push({ value: '', label: sectionLabel, section: true });
+                    for (const preset of presetsInCat) {
+                      const detail =
+                        preset.models.length > 0
+                          ? `${preset.models.length} model${preset.models.length > 1 ? 's' : ''}`
+                          : undefined;
+                      items.push({
+                        value: preset.name,
+                        label: preset.name,
+                        detail,
+                      });
+                    }
                   }
-                  // Section: Local (Ollama only, if not already configured)
-                  const ollamaPreset = PROVIDER_PRESETS.find((p) => p.name === 'Ollama');
-                  const ollamaConfigured = config.providers.some(
-                    (p) => p.name.toLowerCase() === 'ollama',
-                  );
-                  if (ollamaPreset && !ollamaConfigured) {
-                    items.push({ label: t('wiz.provider.section.local'), value: '', section: true });
-                    items.push({
-                      label: ollamaPreset.name,
-                      value: ollamaPreset.name,
-                      detail: t('wiz.provider.ollamaDetail'),
-                    });
-                  }
+
                   // Custom always last
                   items.push({
                     label: t('wiz.provider.custom'),
