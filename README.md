@@ -114,7 +114,7 @@ Aliases:
 - `/t` -> `/task`
 - `/p` -> `/plan`
 
-Plain text is equivalent to `/task`. `/spawn` remains accepted as a compatibility alias for task mode, but it is no longer the primary command.
+Plain text is equivalent to `/task`.
 
 ## Control Room
 
@@ -343,6 +343,16 @@ The runtime is intentionally small:
 - `src/ui/`: Ink components for the hub, timelines, settings, prompts, and attach UI.
 - `src/commands.ts`: hub command registry, hidden compatibility commands, aliases, and dispatch.
 - `src/config.ts` and `src/i18n.ts`: provider/session config and translations.
+
+## Changelog
+
+### 0.4.0
+
+- **Removed `/spawn`** — use `/task` instead. The alias was redundant and its removal simplified the command registry.
+- **System messages color-coded by severity** — green for success, yellow for warnings, red for errors, gray for informational. Applied across all ~40 system messages in every command.
+- **UI fully internationalized** — all wizard screens, menus, and prompts now available in English, French, Spanish, and Chinese (zh).
+- **AgentHub header indicators** — the hub header now shows the active mode, model, and context usage at a glance.
+- **Fixed `/pause` double-call** — rapid consecutive `/pause` invocations no longer trigger the action twice.
 
 ## Development
 
