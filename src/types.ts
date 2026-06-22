@@ -126,6 +126,8 @@ export interface ProviderConfig {
 export interface ModelPrice {
   input: number;
   output: number;
+  /** Optional cache-hit price per 1M tokens. Only for providers that offer prompt caching. */
+  cacheHit?: number;
 }
 
 /** Global (initial) settings — editable later via /settings. */

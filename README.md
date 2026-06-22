@@ -290,54 +290,54 @@ Parallel is provider-agnostic. It ships with **29 pre-configured providers** org
 
 | Provider | Endpoint | Default Model | Models |
 |----------|----------|---------------|--------|
-| OpenAI | `api.openai.com` | `gpt-4o-mini` | 13 |
-| Anthropic | `api.anthropic.com` | `claude-sonnet-4` | 5 |
-| Google Gemini | `generativelanguage.googleapis.com` | `gemini-2.5-flash` | 5 |
-| xAI Grok | `api.x.ai` | `grok-3-mini` | 4 |
-| Mistral | `api.mistral.ai` | `mistral-large` | 8 |
-| Cohere | `api.cohere.com` | `command-a` | 7 |
-| Perplexity | `api.perplexity.ai` | `sonar` | 5 |
+| OpenAI | `api.openai.com` | `gpt-5.5` | 11 |
+| Anthropic | `api.anthropic.com` | `claude-sonnet-4-6` | 4 |
+| Google Gemini | `generativelanguage.googleapis.com` | `gemini-3.5-flash` | 4 |
+| xAI Grok | `api.x.ai` | `grok-4` | 4 |
+| Mistral | `api.mistral.ai` | `mistral-large-2` | 4 |
+| Cohere | `api.cohere.com` | `command-a` | 2 |
+| Perplexity | `api.perplexity.ai` | `sonar-pro` | 2 |
 
 #### 🇨🇳 Chinese
 
 | Provider | Endpoint | Default Model | Models |
 |----------|----------|---------------|--------|
-| DeepSeek | `api.deepseek.com` | `deepseek-chat` | 2 |
-| MiniMax | `api.minimax.io` | `minimax-m1` | 5 |
-| Z.ai / GLM | `open.bigmodel.cn` | `glm-4.5` | 7 |
-| Alibaba / Qwen | `dashscope.aliyuncs.com` | `qwen3-max` | 8 |
-| Moonshot / Kimi | `api.moonshot.cn` | `kimi-k2` | 5 |
-| Xiaomi / MiMo | `api.minimaxi.com` | `mimo-pro` | 4 |
-| StepFun | `api.stepfun.com` | `step-3` | 6 |
+| DeepSeek | `api.deepseek.com` | `deepseek-v4-pro` | 4 |
+| MiniMax | `api.minimax.io` | `MiniMax-M3` | 3 |
+| Z.ai / GLM | `open.bigmodel.cn` | `glm-5.2` | 5 |
+| Alibaba / Qwen | `dashscope.aliyuncs.com` | `qwen3.7-max` | 4 |
+| Moonshot / Kimi | `api.moonshot.cn` | `kimi-k2.6` | 4 |
+| Xiaomi / MiMo | `api.minimaxi.com` | `mimo-v2-pro` | 2 |
+| StepFun | `api.stepfun.com` | `step-2-16k` | 1 |
 
 #### 🌐 Gateways
 
 | Provider | Endpoint | Default Model | Models |
 |----------|----------|---------------|--------|
-| OpenRouter | `openrouter.ai` | `gpt-4o` | 6 |
-| SiliconFlow | `api.siliconflow.cn` | `DeepSeek-V3` | 6 |
-| Atlas Cloud | `api.atlascloud.ai` | `deepseek-v3` | 6 |
-| Requesty | `api.requesty.ai` | `gpt-4o` | 6 |
-| Vercel AI Gateway | `api.vercel.ai` | `gpt-4o` | 5 |
+| OpenRouter | `openrouter.ai` | `gpt-5.5` | 6 |
+| SiliconFlow | `api.siliconflow.cn` | `DeepSeek-V4-Pro` | 5 |
+| Atlas Cloud | `api.atlascloud.ai` | `deepseek-v4-pro` | 6 |
+| Requesty | `api.requesty.ai` | `gpt-5.5` | 6 |
+| Vercel AI Gateway | `api.vercel.ai` | `gpt-5.5` | 5 |
 
 #### ⚡ Inference
 
 | Provider | Endpoint | Default Model | Models |
 |----------|----------|---------------|--------|
-| Groq | `api.groq.com` | `llama-4-scout` | 6 |
-| Cerebras | `api.cerebras.ai` | `llama-4-scout` | 5 |
-| Together AI | `api.together.xyz` | `llama-4-maverick` | 6 |
-| Fireworks | `api.fireworks.ai` | `llama4-maverick` | 5 |
-| DeepInfra | `api.deepinfra.com` | `llama-4-maverick` | 6 |
-| Novita | `api.novita.ai` | `llama-4-maverick` | 5 |
-| Hyperbolic | `api.hyperbolic.ai` | `llama-4-maverick` | 6 |
-| SambaNova | `api.sambanova.ai` | `llama-4-maverick` | 5 |
+| Groq | `api.groq.com` | `qwen-2.5-coder-32b` | 4 |
+| Cerebras | `api.cerebras.ai` | `llama-4-maverick` | 4 |
+| Together AI | `api.together.xyz` | `llama-4-maverick` | 4 |
+| Fireworks | `api.fireworks.ai` | `llama4-maverick` | 4 |
+| DeepInfra | `api.deepinfra.com` | `llama-4-maverick` | 4 |
+| Novita | `api.novita.ai` | `llama-4-maverick` | 4 |
+| Hyperbolic | `api.hyperbolic.ai` | `llama-4-maverick` | 4 |
+| SambaNova | `api.sambanova.ai` | `llama-4-maverick` | 3 |
 
 #### 🏠 Local
 
 | Provider | Endpoint | Default Model | Models |
 |----------|----------|---------------|--------|
-| Ollama | `localhost:11434` | `llama3.2` | 8 |
+| Ollama | `localhost:11434` | `qwen3-coder:480b` | 8 |
 | vLLM / SGLang | `localhost:8000` | — | 1 (placeholder) |
 
 All providers use OpenAI-compatible chat completions with tool calling. Any provider can be set as the default.
@@ -406,6 +406,13 @@ The runtime is intentionally small:
 - `src/config.ts` and `src/i18n.ts`: provider/session config and translations.
 
 ## Changelog
+
+### v0.4.3 — Model catalog refresh
+
+- Updated model names across all 29 providers (GPT-5.5, Claude 4, Gemini 3.x, DeepSeek v4)
+- Added `cacheHit` field to ModelPrice for prompt caching pricing
+- Pricing refresh: ~120 entries updated with current prices
+- Ollama default model changed to `qwen3-coder:480b`
 
 ### v0.4.2 — Provider catalog expansion
 
