@@ -757,6 +757,26 @@ export class Controller extends EventEmitter {
     return true;
   }
 
+  /** Remove a provider by name. Clears the default if it was the removed one. */
+  removeProvider(name: string): boolean {
+    const idx = this.config.providers.findIndex(p => p.name.toLowerCase() === name.toLowerCase());
+    if (idx < 0) return false;
+    this.config.providers.splice(idx, 1);
+    if (this.config.defaultProvider.toLowerCase() === name.toLowerCase()) {
+      this.config.defaultProvider = this.config.providers[0]?.name ?? '';
+    }
+    // If the session was using the removed provider, reset it
+    if (this.session.providerName.toLowerCase() === name.toLowerCase()) {
+      const fallback = this.config.providers[0];
+      this.session.providerName = fallback?.name ?? '';
+      this.session.model = fallback?.defaultModel ?? '';
+    }
+    saveConfig(this.config);
+    this.llmCache.clear();
+    this.emit('update');
+    return true;
+  }
+
   setGlobalApprovalMode(mode: ShellApprovalMode): void {
     this.config.approvalMode = mode;
     saveConfig(this.config);

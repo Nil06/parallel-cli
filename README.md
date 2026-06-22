@@ -34,7 +34,7 @@ The philosophy is simple: agents can move in parallel, but the human keeps the c
 - Avoid silent overwrites with adaptive merge-on-write for file edits.
 - Pause, resume, stop, focus, restore, and steer agents while they are running.
 - Review live diffs, notes, costs, sessions, skills, and specialists from built-in views.
-- Use any OpenAI-compatible provider, including DeepSeek, OpenRouter, Ollama, vLLM, LM Studio, and local servers.
+- Use any OpenAI-compatible provider — 18 pre-configured cloud providers (DeepSeek, xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, SambaNova, and more), plus Ollama for local models, and any custom OpenAI-compatible endpoint.
 - Choose shell approval behavior: `ask`, `auto-safe`, or `yolo`.
 - Track token usage and estimated cost per agent and per session.
 
@@ -281,7 +281,9 @@ When there is exactly one agent, commands such as `/undo`, `/focus`, `/pause`, `
 
 ## Providers
 
-Parallel uses OpenAI-compatible chat completions with tool calling. The built-in DeepSeek preset works out of the box once an API key is configured.
+Parallel ships with **18 pre-configured cloud providers** with verified endpoints and curated model lists, plus **Ollama** for local models with automatic model detection. All providers use OpenAI-compatible chat completions with tool calling. You can also add any custom OpenAI-compatible endpoint.
+
+The built-in DeepSeek preset works out of the box once an API key is configured. Additional providers like xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, and SambaNova are available for selection during setup or from the Providers settings submenu.
 
 Environment variables:
 
@@ -345,6 +347,15 @@ The runtime is intentionally small:
 - `src/config.ts` and `src/i18n.ts`: provider/session config and translations.
 
 ## Changelog
+
+### 0.4.1
+
+- **18 pre-configured cloud providers** with verified endpoints and curated model lists (up from 8). Added: xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, SambaNova.
+- **Ollama (local models)** as a first-class preset with automatic connectivity check and model detection.
+- **Wizard redesign** — provider selection now grouped by category (Configured, Cloud, Local, Custom) instead of a flat list.
+- **Settings reorganization** — all provider actions (keys, models, pricing, add/remove) consolidated under a "Providers" submenu; settings root reduced from 13 to 8 items.
+- **Provider removal** — can now remove configured providers from settings.
+- Custom provider option always available for any OpenAI-compatible endpoint.
 
 ### 0.4.0
 

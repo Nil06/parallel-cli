@@ -6,6 +6,10 @@ export interface SelectItem {
   label: string;
   value: string;
   hint?: string;
+  /** Non-selectable section header when true. */
+  section?: boolean;
+  /** Secondary detail shown after the label (subtler than hint). */
+  detail?: string;
 }
 
 /**
@@ -35,6 +39,8 @@ export function SelectList({
   const typing = allowInput && typed.length > 0;
 
   useInput((input, key) => {
+    // Build selectable index list each render (cheap — items is small).
+    const selectable = items.map((it, i) => (it.section ? -1 : i)).filter((i) => i >= 0);
     if (key.escape) {
       if (typed) setTyped('');
       else onBack?.();
@@ -45,8 +51,9 @@ export function SelectList({
         const v = typed.trim();
         setTyped('');
         if (v) onInput?.(v);
-      } else if (items[idx]) {
-        onSelect?.(items[idx].value);
+      } else {
+        const realIdx = selectable[idx];
+        if (realIdx !== undefined && items[realIdx]) onSelect?.(items[realIdx].value);
       }
       return;
     }
@@ -55,11 +62,11 @@ export function SelectList({
       return;
     }
     if (key.upArrow) {
-      if (!typing) setIdx((i) => (i - 1 + items.length) % Math.max(1, items.length));
+      if (!typing) setIdx((i) => (i - 1 + selectable.length) % Math.max(1, selectable.length));
       return;
     }
     if (key.downArrow) {
-      if (!typing) setIdx((i) => (i + 1) % Math.max(1, items.length));
+      if (!typing) setIdx((i) => (i + 1) % Math.max(1, selectable.length));
       return;
     }
     if (key.tab || key.ctrl || key.meta) return;
@@ -74,17 +81,30 @@ export function SelectList({
     setTyped((v) => v + input);
   });
 
+  // Build a separate index map so up/down skip section headers.
+  const selectable = items.map((it, i) => (it.section ? -1 : i)).filter((i) => i >= 0);
+  const safeIdx = selectable.length > 0 ? selectable[Math.min(idx, selectable.length - 1)] : -1;
+
   return (
     <Box flexDirection="column">
-      {items.map((it, i) => (
-        <Text key={it.value + i}>
-          <Text color={!typing && i === idx ? 'cyanBright' : 'gray'} bold={!typing && i === idx}>
-            {!typing && i === idx ? '❯ ' : '  '}
-            {it.label}
+      {items.map((it, i) =>
+        it.section ? (
+          <Box key={it.label} marginTop={i > 0 ? 1 : 0}>
+            <Text bold color="white">
+              {it.label}
+            </Text>
+          </Box>
+        ) : (
+          <Text key={it.value + i}>
+            <Text color={!typing && i === safeIdx ? 'cyanBright' : 'gray'} bold={!typing && i === safeIdx}>
+              {!typing && i === safeIdx ? '❯ ' : '  '}
+              {it.label}
+            </Text>
+            {it.hint ? <Text color="gray"> {it.hint}</Text> : null}
+            {it.detail ? <Text color="gray"> — {it.detail}</Text> : null}
           </Text>
-          {it.hint ? <Text color="gray"> {it.hint}</Text> : null}
-        </Text>
-      ))}
+        ),
+      )}
       {allowInput && (
         <Box marginTop={items.length > 0 ? 1 : 0}>
           <Text color={typing ? 'cyanBright' : 'gray'}>

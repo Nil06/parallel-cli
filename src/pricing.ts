@@ -32,6 +32,33 @@ const BUILTIN: Record<string, ModelPrice> = {
   // Alibaba
   'qwen2.5-coder': { input: 0.09, output: 0.09 },
   'qwen-max': { input: 1.6, output: 6.4 },
+  // xAI (Grok)
+  'grok-4': { input: 4.0, output: 16.0 },
+  'grok-3-beta': { input: 3.0, output: 12.0 },
+  'grok-3-mini': { input: 0.55, output: 2.2 },
+  // Perplexity
+  'sonar-pro': { input: 3.0, output: 15.0 },
+  'sonar': { input: 1.0, output: 1.0 },
+  'sonar-reasoning': { input: 2.0, output: 16.0 },
+  // Cohere
+  'command-a': { input: 2.5, output: 10.0 },
+  'command-r-plus': { input: 2.5, output: 10.0 },
+  'command-r': { input: 0.5, output: 1.5 },
+  // DeepInfra
+  'llama-4-maverick': { input: 0.2, output: 0.6 }, // approximate
+  'wizardlm-2-8x22b': { input: 0.5, output: 0.5 }, // approximate
+  // Fireworks
+  'llama-4-scout': { input: 0.1, output: 0.3 }, // approximate
+  'mixtral-8x22b': { input: 0.9, output: 0.9 }, // approximate
+  // Cerebras
+  'llama-3.3-70b @cerebras': { input: 0.5, output: 1.5 }, // approximate
+  'llama-3.1-8b': { input: 0.05, output: 0.1 }, // approximate
+  // Novita
+  'deepseek-r1': { input: 2.0, output: 8.0 },
+  'deepseek-v3': { input: 1.25, output: 5.0 },
+  'llama-3.1-70b': { input: 0.35, output: 0.4 }, // approximate
+  // Hyperbolic
+  'qwen3-235b': { input: 0.5, output: 1.5 }, // approximate
   // Local endpoints are free
   'ollama': { input: 0, output: 0 },
 };

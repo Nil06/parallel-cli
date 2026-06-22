@@ -340,39 +340,115 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
           {phase === 'provider' && providerStep.id === 'pick' && (
             <WizardStep step={4} total={totalSteps} title={t('wiz.provider.title')}>
               <SelectList
-                items={[
-                  ...config.providers.map(
+                items={(() => {
+                  const items: SelectItem[] = [];
+                  // Section: Configured
+                  const configured = config.providers.map(
                     (p): SelectItem => ({
                       label: p.name,
-                      value: `existing:${p.name}`,
-                      hint: `(${p.baseUrl}${p.apiKey ? '' : ' — ' + t('wiz.provider.needsKey')})`,
+                      value: p.name,
+                      detail: p.apiKey ? undefined : t('wiz.provider.needsKey'),
                     }),
-                  ),
-                  ...PROVIDER_PRESETS.filter(
-                    (preset) => !config.providers.some((p) => p.name.toLowerCase() === preset.name.toLowerCase()),
-                  ).map((preset): SelectItem => ({
-                    label: preset.name,
-                    value: `preset:${preset.name}`,
-                    hint: t('wiz.provider.presetHint', { url: preset.baseUrl, model: preset.defaultModel }),
-                  })),
-                  { label: t('wiz.provider.custom'), value: '__custom__', hint: t('wiz.provider.customHint') },
-                ]}
+                  );
+                  if (configured.length > 0) {
+                    items.push({ label: t('wiz.provider.section.configured'), value: '', section: true });
+                    items.push(...configured);
+                  }
+                  // Section: Cloud Providers (presets except Ollama, not already configured)
+                  const cloudPresets = PROVIDER_PRESETS.filter(
+                    (preset) =>
+                      preset.name !== 'Ollama' &&
+                      !config.providers.some((p) => p.name.toLowerCase() === preset.name.toLowerCase()),
+                  );
+                  if (cloudPresets.length > 0) {
+                    items.push({ label: t('wiz.provider.section.cloud'), value: '', section: true });
+                    items.push(
+                      ...cloudPresets.map(
+                        (preset): SelectItem => ({
+                          label: preset.name,
+                          value: preset.name,
+                          detail: preset.defaultModel,
+                        }),
+                      ),
+                    );
+                  }
+                  // Section: Local (Ollama only, if not already configured)
+                  const ollamaPreset = PROVIDER_PRESETS.find((p) => p.name === 'Ollama');
+                  const ollamaConfigured = config.providers.some(
+                    (p) => p.name.toLowerCase() === 'ollama',
+                  );
+                  if (ollamaPreset && !ollamaConfigured) {
+                    items.push({ label: t('wiz.provider.section.local'), value: '', section: true });
+                    items.push({
+                      label: ollamaPreset.name,
+                      value: ollamaPreset.name,
+                      detail: t('wiz.provider.ollamaDetail'),
+                    });
+                  }
+                  // Custom always last
+                  items.push({
+                    label: t('wiz.provider.custom'),
+                    value: '__custom__',
+                    detail: t('wiz.provider.customDetail'),
+                  });
+                  return items;
+                })()}
                 onBack={wizardBack}
-                onSelect={(v) => {
+                onSelect={async (v) => {
                   if (v === '__custom__') return setProviderStep({ id: 'name' });
-                  if (v.startsWith('preset:')) {
-                    const preset = PROVIDER_PRESETS.find((p) => p.name === v.slice('preset:'.length));
-                    if (preset) return setProviderStep({ id: 'key', preset: { ...preset, models: [...preset.models] } });
+                  // Already-configured provider?
+                  const existing = config.providers.find((x) => x.name === v);
+                  if (existing) {
+                    if (existing.apiKey) {
+                      ctlRef.current?.setDefaultProvider(v);
+                      ctlRef.current?.setSessionProvider(v);
+                      enterMain();
+                    } else {
+                      setProviderStep({ id: 'key', preset: existing });
+                    }
+                    return;
                   }
-                  const p = config.providers.find((x) => x.name === v.slice('existing:'.length));
-                  if (!p) return;
-                  if (p.apiKey) {
-                    ctlRef.current?.setDefaultProvider(p.name);
-                    ctlRef.current?.setSessionProvider(p.name);
-                    enterMain();
-                  } else {
-                    setProviderStep({ id: 'key', preset: p });
+                  // Must be a preset
+                  const preset = PROVIDER_PRESETS.find((p) => p.name === v);
+                  if (!preset) return;
+                  // Ollama: connectivity check with 2s timeout
+                  if (preset.name.toLowerCase() === 'ollama') {
+                    setSystemLines((ls) => [
+                      ...ls.slice(-5),
+                      { text: t('wiz.provider.ollama.checking', { url: preset.baseUrl }), level: 'info' as SystemLevel },
+                    ]);
+                    let models = [...preset.models];
+                    let defaultModel = preset.defaultModel;
+                    try {
+                      const controller = new AbortController();
+                      const timeout = setTimeout(() => controller.abort(), 2000);
+                      const resp = await fetch(preset.baseUrl + '/models', { signal: controller.signal });
+                      clearTimeout(timeout);
+                      if (resp.ok) {
+                        const data = (await resp.json()) as { data?: { id: string }[] };
+                        const detected = data?.data?.map((m) => m.id).filter(Boolean) ?? [];
+                        if (detected.length > 0) {
+                          models = detected;
+                          defaultModel = detected[0];
+                          setSystemLines((ls) => [
+                            ...ls.slice(-5),
+                            { text: t('wiz.provider.ollama.found', { n: detected.length }), level: 'ok' as SystemLevel },
+                          ]);
+                        }
+                      }
+                    } catch {
+                      setSystemLines((ls) => [
+                        ...ls.slice(-5),
+                        { text: t('wiz.provider.ollama.notFound', { url: preset.baseUrl }), level: 'warn' as SystemLevel },
+                      ]);
+                    }
+                    const ollamaProvider: ProviderConfig = { ...preset, apiKey: 'ollama-local', models, defaultModel };
+                    ctlRef.current?.saveProvider(ollamaProvider);
+                    ctlRef.current?.setSessionProvider(ollamaProvider.name);
+                    setPhase('model');
+                    return;
                   }
+                  setProviderStep({ id: 'key', preset: { ...preset, models: [...preset.models] } });
                 }}
               />
             </WizardStep>
@@ -528,7 +604,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
         if (view !== 'agents') setView('agents');
         else if (focus) {
           setFocus(null);
-          ui.system(t('m.focusOff'));
+          ui.system(t('m.focusOff'), 'info');
         }
       }}
       notify={ui.system}

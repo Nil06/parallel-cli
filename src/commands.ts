@@ -227,7 +227,7 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     case '/issue': {
       // Import a task from GitHub Issues (requires the gh CLI, authenticated).
       const n = Number.parseInt(arg, 10);
-      if (!arg || Number.isNaN(n)) return ui.system(t('m.usageIssue'));
+      if (!arg || Number.isNaN(n)) return ui.system(t('m.usageIssue'), 'warn');
       const issue = ctl.fetchIssue(n);
       if ('error' in issue) {
         return ui.system(issue.error === 'gh-missing' ? t('m.ghMissing') : t('m.issueFail', { msg: issue.error }), 'error');
@@ -322,7 +322,7 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     case '/focus': {
       const who = arg || soloAgent(ctl);
       if (!who) return ui.system(t('m.usageFocus'), 'warn');
-      if (!ui.setFocus) return;
+      if (!ui.setFocus) return ui.system(t('m.focusOff'), 'info');
       if (who.toLowerCase() === 'off') {
         ui.setFocus(null);
         ui.system(t('m.focusOff'), 'info');
