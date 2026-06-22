@@ -34,7 +34,7 @@ The philosophy is simple: agents can move in parallel, but the human keeps the c
 - Avoid silent overwrites with adaptive merge-on-write for file edits.
 - Pause, resume, stop, focus, restore, and steer agents while they are running.
 - Review live diffs, notes, costs, sessions, skills, and specialists from built-in views.
-- Use any OpenAI-compatible provider — 18 pre-configured cloud providers (DeepSeek, xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, SambaNova, and more), plus Ollama for local models, and any custom OpenAI-compatible endpoint.
+- Use any OpenAI-compatible provider — 17 pre-configured cloud providers (DeepSeek, xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, SambaNova, and more), plus Ollama for local models, and any custom OpenAI-compatible endpoint.
 - Choose shell approval behavior: `ask`, `auto-safe`, or `yolo`.
 - Track token usage and estimated cost per agent and per session.
 
@@ -238,6 +238,8 @@ Headless mode:
 | `/resume <agent\|all>` | Resume paused agents. |
 | `/stop <agent\|all>` | Stop running agents. |
 | `/clear` | Remove finished agents from the current display. |
+| `/raw` | | Toggle conversation-raw view. |
+| `/copy` | | Copy latest completed result to clipboard. |
 
 ### Git Safety
 
@@ -256,6 +258,7 @@ Headless mode:
 | `/notes` | Full notes history. |
 | `/diff` | Live diff history. |
 | `/cost` | Token and cost breakdown. |
+| `/status` | | Session model, approval mode, agents, cost snapshot. |
 | `/skills` | Available skills. |
 | `/specialists` | Available specialists. |
 | `/save [name]` | Save the current session. |
@@ -269,7 +272,7 @@ Headless mode:
 | --- | --- |
 | `/model [[provider:]model]` | Show or switch the session model. |
 | `/key <api-key>` | Store the API key for the active provider. |
-| `/approvals <ask\|auto-safe\|yolo>` | Set shell approvals for this session. |
+| `/approvals <ask\|auto\|auto-safe\|yolo>` | Set shell approvals for this session. |
 | `/sound <on\|off>` | Toggle terminal bell notifications. |
 | `/settings` | Edit global language, providers, keys, defaults, and approvals. |
 | `/settings-session` | Edit session-only model, approvals, and sound. |
@@ -281,7 +284,7 @@ When there is exactly one agent, commands such as `/undo`, `/focus`, `/pause`, `
 
 ## Providers
 
-Parallel ships with **18 pre-configured cloud providers** with verified endpoints and curated model lists, plus **Ollama** for local models with automatic model detection. All providers use OpenAI-compatible chat completions with tool calling. You can also add any custom OpenAI-compatible endpoint.
+Parallel ships with **17 pre-configured cloud providers** with verified endpoints and curated model lists, plus **Ollama** for local models with automatic model detection. All providers use OpenAI-compatible chat completions with tool calling. You can also add any custom OpenAI-compatible endpoint.
 
 The built-in DeepSeek preset works out of the box once an API key is configured. Additional providers like xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, and SambaNova are available for selection during setup or from the Providers settings submenu.
 
@@ -350,7 +353,7 @@ The runtime is intentionally small:
 
 ### 0.4.1
 
-- **18 pre-configured cloud providers** with verified endpoints and curated model lists (up from 8). Added: xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, SambaNova.
+- **17 pre-configured cloud providers** with verified endpoints and curated model lists (up from 8). Added: xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, SambaNova.
 - **Ollama (local models)** as a first-class preset with automatic connectivity check and model detection.
 - **Wizard redesign** — provider selection now grouped by category (Configured, Cloud, Local, Custom) instead of a flat list.
 - **Settings reorganization** — all provider actions (keys, models, pricing, add/remove) consolidated under a "Providers" submenu; settings root reduced from 13 to 8 items.

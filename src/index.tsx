@@ -47,6 +47,7 @@ Environment variables:
   PARALLEL_API_KEY / DEEPSEEK_API_KEY   API key
   PARALLEL_MODEL                        Default model (e.g. deepseek-chat)
   PARALLEL_BASE_URL                     OpenAI-compatible endpoint
+  PARALLEL_NO_ALT_SCREEN=1              Disable the alternate terminal screen.
 
 Inside the TUI:
   <task> + Enter         Launch agent N+1 — even while the others are working
