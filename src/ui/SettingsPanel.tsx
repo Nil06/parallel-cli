@@ -3,9 +3,9 @@ import { Box, Text } from 'ink';
 import { Controller } from '../controller.js';
 import { createSkillTemplate, createSpecialistTemplate } from '../skills.js';
 import { priceFor } from '../pricing.js';
-import { SelectList, type SelectItem } from './Wizard.js';
+import { SelectList as BaseSelectList, type SelectItem } from './Wizard.js';
 import { LANGS, getLang, setLang, t } from '../i18n.js';
-import { providerNeedsApiKey, providerReady, PROVIDER_PRESETS } from '../config.js';
+import { detectProviderModels, isLocalProvider, isPlaceholderModel, providerNeedsApiKey, PROVIDER_PRESETS } from '../config.js';
 import type { Lang, ProviderConfig, ShellApprovalMode } from '../types.js';
 
 type Step =
@@ -15,6 +15,7 @@ type Step =
   | { id: 'model'; provider: ProviderConfig; custom?: boolean; setup?: boolean }
   | { id: 'endpoint'; provider: ProviderConfig; setup?: boolean }
   | { id: 'editEndpoint'; provider: ProviderConfig; setup?: boolean }
+  | { id: 'setupScope'; provider: ProviderConfig }
   | { id: 'modelList'; provider: ProviderConfig }
   | { id: 'key'; provider: ProviderConfig; setup?: boolean }
   | { id: 'priceModel'; provider: ProviderConfig }
@@ -70,6 +71,15 @@ export function SettingsPanel({
   const saved = () => setFlash(t('set.saved'));
   const cfg = ctl.config;
   const listHeight = height ? Math.max(3, height - 5) : undefined;
+  const goBack = () => {
+    if (step.id === 'root') return onClose();
+    setStep(returnStep ?? { id: 'root' });
+    setReturnStep(null);
+  };
+  const SelectList = (props: React.ComponentProps<typeof BaseSelectList>) => {
+    const { onBack, ...rest } = props;
+    return <BaseSelectList {...rest} onBack={onBack ?? goBack} />;
+  };
 
   // ---- root menu items ----
 
@@ -129,6 +139,10 @@ export function SettingsPanel({
   // ---- shared helpers ----
 
   const pickModel = (provider: ProviderConfig, model: string) => {
+    if (isPlaceholderModel(model)) {
+      setFlash(t('set.modelPlaceholder'));
+      return;
+    }
     if (step.id === 'model' && step.setup) {
       provider.defaultModel = model;
       if (!provider.models.includes(model)) provider.models.push(model);
@@ -148,21 +162,21 @@ export function SettingsPanel({
     setReturnStep(null);
   };
 
-  const finishProviderSetup = (provider: ProviderConfig) => {
-    ctl.saveProvider(provider);
-    if (scope === 'global') {
-      ctl.setDefaultProvider(provider.name);
-      saved();
+  const finishProviderSetup = (provider: ProviderConfig, persist = scope === 'global') => {
+    if (persist) {
+      ctl.saveProvider(provider);
+      if (scope === 'global') {
+        ctl.setDefaultProvider(provider.name);
+        saved();
+      } else {
+        ctl.setSessionModel(`${provider.name}:${provider.defaultModel || provider.models[0] || ''}`);
+        setFlash(t('set.saved'));
+      }
     } else {
-      ctl.setSessionModel(`${provider.name}:${provider.defaultModel || provider.models[0] || ''}`);
+      ctl.setSessionProviderConfig(provider);
+      setFlash(t('set.sessionProviderReady', { name: provider.name }));
     }
     setStep(returnStep ?? { id: 'providers', scope });
-    setReturnStep(null);
-  };
-
-  const finishNewProvider = (name: string, url: string, model: string, key: string) => {
-    finishProviderSetup({ name, baseUrl: url, apiKey: key, models: [model], defaultModel: model });
-    setStep(returnStep ?? { id: 'root' });
     setReturnStep(null);
   };
 
@@ -271,6 +285,7 @@ export function SettingsPanel({
                 if (v === 'edit') return setStep({ id: 'editEndpoint', provider: step.provider, setup: step.setup });
                 if (step.setup) {
                   if (providerNeedsApiKey(step.provider)) return setStep({ id: 'key', provider: step.provider, setup: true });
+                  if (scope === 'session') return setStep({ id: 'setupScope', provider: step.provider });
                   finishProviderSetup(step.provider);
                   return;
                 }
@@ -278,6 +293,25 @@ export function SettingsPanel({
                 saved();
                 setStep(returnStep ?? { id: 'providerDetail', provider: step.provider, scope });
                 setReturnStep(null);
+              }}
+            />
+          </>
+        )}
+
+        {/* ---- setupScope (session setup: choose temporary vs global save) ---- */}
+        {step.id === 'setupScope' && (
+          <>
+            <Text color="gray">{t('set.setupScope.title', { name: step.provider.name })}</Text>
+            <SelectList
+              items={[
+                { label: t('set.setupScope.session'), value: 'session' },
+                { label: t('set.setupScope.global'), value: 'global' },
+                { label: t('set.back'), value: '__back__' },
+              ]}
+              height={listHeight}
+              onSelect={(v) => {
+                if (v === '__back__') return setStep({ id: 'endpoint', provider: step.provider, setup: true });
+                finishProviderSetup(step.provider, v === 'global');
               }}
             />
           </>
@@ -415,8 +449,14 @@ export function SettingsPanel({
               inputPlaceholder="sk-…"
               onInput={(k) => {
                 const provider = { ...step.provider, apiKey: k.trim() };
-                if (step.setup) finishProviderSetup(provider);
-                else {
+                if (step.setup) {
+                  if (scope === 'session') {
+                    setStep({ id: 'setupScope', provider });
+                    return;
+                  }
+                  finishProviderSetup(provider);
+                  return;
+                } else {
                   ctl.saveProvider(provider);
                   saved();
                 }
@@ -460,7 +500,26 @@ export function SettingsPanel({
               height={listHeight}
               allowInput
               inputPlaceholder={t('wiz.provider.model.ph')}
-              onInput={(model) => setStep({ id: 'newKey', name: step.name, url: step.url, model })}
+              onInput={(model) => {
+                const trimmed = model.trim();
+                if (isPlaceholderModel(trimmed)) {
+                  setFlash(t('set.modelPlaceholder'));
+                  return;
+                }
+                const local = isLocalProvider({ baseUrl: step.url });
+                setStep({
+                  id: 'endpoint',
+                  setup: true,
+                  provider: {
+                    name: step.name,
+                    baseUrl: step.url,
+                    apiKey: '',
+                    models: [trimmed],
+                    defaultModel: trimmed,
+                    requiresApiKey: !local,
+                  },
+                });
+              }}
             />
           </>
         )}
@@ -473,7 +532,7 @@ export function SettingsPanel({
               allowInput
               mask
               inputPlaceholder="sk-…"
-              onInput={(key) => finishNewProvider(step.name, step.url, step.model, key.trim())}
+              onInput={(key) => finishProviderSetup({ name: step.name, baseUrl: step.url, apiKey: key.trim(), models: [step.model], defaultModel: step.model })}
             />
           </>
         )}
@@ -597,9 +656,28 @@ export function SettingsPanel({
                   const preset = PROVIDER_PRESETS.find((p) => p.name === presetName);
                   if (!preset) return;
 
-                  if (presetName.toLowerCase() === 'ollama') {
-                    setReturnStep({ id: 'providers', scope: step.scope });
-                    return setStep({ id: 'model', provider: { ...preset, apiKey: 'ollama-local' }, setup: true });
+                  if (preset.category === 'local') {
+                    setFlash(t('wiz.provider.ollama.checking', { url: preset.baseUrl }));
+                    void (async () => {
+                      const detected = await detectProviderModels(preset);
+                      setFlash(
+                        detected
+                          ? t('wiz.provider.ollama.found', { n: detected.models.length })
+                          : t('wiz.provider.ollama.notFound', { url: preset.baseUrl }),
+                      );
+                      setReturnStep({ id: 'providers', scope: step.scope });
+                      setStep({
+                        id: 'model',
+                        provider: {
+                          ...preset,
+                          apiKey: 'local',
+                          models: detected?.models ?? [...preset.models],
+                          defaultModel: detected?.defaultModel ?? preset.defaultModel,
+                        },
+                        setup: true,
+                      });
+                    })();
+                    return;
                   }
 
                   // Preset setup: choose model, review endpoint, then ask for API key if needed.

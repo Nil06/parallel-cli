@@ -290,8 +290,40 @@ export function providerNeedsApiKey(p: ProviderConfig): boolean {
   return p.requiresApiKey !== false && !isLocalProvider(p);
 }
 
+export function isPlaceholderModel(model: string): boolean {
+  return !model.trim() || /^your-model-here$/i.test(model.trim());
+}
+
+export function providerHasUsableModel(p: ProviderConfig): boolean {
+  return !isPlaceholderModel(p.defaultModel || p.models[0] || '');
+}
+
 export function providerReady(p: ProviderConfig): boolean {
-  return !providerNeedsApiKey(p) || p.apiKey.trim().length > 0;
+  return (!providerNeedsApiKey(p) || p.apiKey.trim().length > 0) && providerHasUsableModel(p);
+}
+
+export async function detectProviderModels(
+  provider: ProviderConfig,
+  timeoutMs = 2000,
+): Promise<{ models: string[]; defaultModel: string } | null> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const controller = new AbortController();
+    timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const resp = await fetch(provider.baseUrl.replace(/\/+$/, '') + '/models', { signal: controller.signal });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { data?: { id?: string; name?: string }[]; models?: { name?: string }[] };
+    const models = [
+      ...(data.data?.map((m) => m.id || m.name).filter(Boolean) ?? []),
+      ...(data.models?.map((m) => m.name).filter(Boolean) ?? []),
+    ] as string[];
+    const unique = [...new Set(models.filter((m) => !isPlaceholderModel(m)))];
+    return unique.length > 0 ? { models: unique, defaultModel: unique[0] } : null;
+  } catch {
+    return null;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 export function getProvider(cfg: ParallelConfig, name?: string): ProviderConfig | undefined {

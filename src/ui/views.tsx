@@ -48,9 +48,14 @@ function useVisibleRows(overhead: number, min = 6): number {
   return Math.max(min, (stdout?.rows ?? 30) - overhead);
 }
 
-export function BoardView({ board }: { board: Blackboard }) {
+export function BoardView({ board, bodyHeight }: { board: Blackboard; bodyHeight?: number }) {
   const agents = [...board.agents.values()];
-  const activities = [...board.fileActivity.values()].sort((a, b) => b.ts - a.ts).slice(0, 12);
+  const fallbackVisible = useVisibleRows(12);
+  const visibleAgents = bodyHeight ? Math.max(1, Math.floor((bodyHeight - 7) / 3)) : fallbackVisible;
+  const { slice: agentSlice, above, below } = useScrollWindow(agents, visibleAgents, 'top');
+  const sideRows = bodyHeight ? Math.max(1, Math.floor((bodyHeight - visibleAgents - 5) / 2)) : 8;
+  const activities = [...board.fileActivity.values()].sort((a, b) => b.ts - a.ts).slice(0, sideRows);
+  const notes = board.notes.slice(-sideRows);
   return (
     <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={1}>
       <Text bold color="yellow">
@@ -60,7 +65,9 @@ export function BoardView({ board }: { board: Blackboard }) {
       {agents.length === 0 ? (
         <Text color="gray"> {t('board.none')}</Text>
       ) : (
-        agents.map((a) => (
+        <>
+        <Above n={above} />
+        {agentSlice.map((a) => (
           <Text key={a.id} wrap="truncate-end">
             {'  '}
             <Text color={a.color} bold>
@@ -72,7 +79,9 @@ export function BoardView({ board }: { board: Blackboard }) {
             </Text>
             <Text color="gray"> {truncate(a.currentAction || a.task, 110)}</Text>
           </Text>
-        ))
+        ))}
+        <Below n={below} />
+        </>
       )}
       <Text bold>{t('board.activity')}</Text>
       {activities.length === 0 ? (
@@ -85,7 +94,7 @@ export function BoardView({ board }: { board: Blackboard }) {
         ))
       )}
       <Text bold>{t('board.notes')}</Text>
-      {board.notes.slice(-8).map((n) => (
+      {notes.map((n) => (
         <Text key={n.id} wrap="truncate-end">
           {'  '}
           <Text color="magenta">
@@ -98,8 +107,9 @@ export function BoardView({ board }: { board: Blackboard }) {
   );
 }
 
-export function NotesView({ board }: { board: Blackboard }) {
-  const visible = useVisibleRows(7);
+export function NotesView({ board, bodyHeight }: { board: Blackboard; bodyHeight?: number }) {
+  const fallbackVisible = useVisibleRows(7);
+  const visible = bodyHeight ? Math.max(3, bodyHeight - 4) : fallbackVisible;
   const { slice, above, below } = useScrollWindow(board.notes, visible, 'bottom');
   return (
     <Box borderStyle="round" borderColor="magenta" flexDirection="column" paddingX={1}>
@@ -128,10 +138,11 @@ export function NotesView({ board }: { board: Blackboard }) {
   );
 }
 
-export function DiffView({ board }: { board: Blackboard }) {
+export function DiffView({ board, bodyHeight }: { board: Blackboard; bodyHeight?: number }) {
   // Each change renders up to ~33 rows (header + 30 patch lines + spacing):
   // window over WHOLE history, newest first, PgUp to walk back in time.
-  const rows = useVisibleRows(8, 18);
+  const fallbackRows = useVisibleRows(8, 18);
+  const rows = bodyHeight ? Math.max(8, bodyHeight - 4) : fallbackRows;
   const perChange = Math.max(1, Math.floor(rows / 34));
   const { slice: changes, above, below } = useScrollWindow(board.changes, perChange, 'bottom');
   return (
@@ -177,8 +188,11 @@ export function DiffView({ board }: { board: Blackboard }) {
 }
 
 /** Financial view: live cost / steps / tokens per agent + session total. */
-export function CostView({ board }: { board: Blackboard }) {
+export function CostView({ board, bodyHeight }: { board: Blackboard; bodyHeight?: number }) {
   const agents = [...board.agents.values()];
+  const fallbackVisible = useVisibleRows(8);
+  const visible = bodyHeight ? Math.max(3, bodyHeight - 7) : fallbackVisible;
+  const { slice, above, below } = useScrollWindow(agents, visible, 'top');
   const total = agents.reduce((s, a) => s + (a.cost ?? 0), 0);
   const unknown = agents.some((a) => a.cost === null);
   return (
@@ -190,7 +204,8 @@ export function CostView({ board }: { board: Blackboard }) {
         <Text color="gray">{t('cost.empty')}</Text>
       ) : (
         <>
-          {agents.map((a) => (
+          <Above n={above} />
+          {slice.map((a) => (
             <Text key={a.id} wrap="truncate-end">
               {'  '}
               <Text color={a.color} bold>
@@ -207,6 +222,7 @@ export function CostView({ board }: { board: Blackboard }) {
               {a.cost === null ? <Text color="gray"> {t('cost.unknown')}</Text> : null}
             </Text>
           ))}
+          <Below n={below} />
           <Text> </Text>
           <Text bold>
             {'  '}
@@ -221,7 +237,10 @@ export function CostView({ board }: { board: Blackboard }) {
 }
 
 /** Skills catalog: user-authored markdown instructions agents can load. */
-export function SkillsView({ skills }: { skills: Skill[] }) {
+export function SkillsView({ skills, bodyHeight }: { skills: Skill[]; bodyHeight?: number }) {
+  const fallbackVisible = useVisibleRows(8);
+  const visible = bodyHeight ? Math.max(3, bodyHeight - 6) : fallbackVisible;
+  const { slice, above, below } = useScrollWindow(skills, visible, 'top');
   return (
     <Box borderStyle="round" borderColor="blueBright" flexDirection="column" paddingX={1}>
       <Text bold color="blueBright">
@@ -230,7 +249,9 @@ export function SkillsView({ skills }: { skills: Skill[] }) {
       {skills.length === 0 ? (
         <Text color="gray">{t('skills.empty')}</Text>
       ) : (
-        skills.map((s) => (
+        <>
+        <Above n={above} />
+        {slice.map((s) => (
           <Text key={s.file} wrap="truncate-end">
             {'  '}
             <Text color="blueBright" bold>
@@ -239,7 +260,9 @@ export function SkillsView({ skills }: { skills: Skill[] }) {
             <Text color={s.scope === 'global' ? 'yellow' : 'green'}>[{s.scope}] </Text>
             <Text color="gray">{truncate(s.description || s.file, 100)}</Text>
           </Text>
-        ))
+        ))}
+        <Below n={below} />
+        </>
       )}
       <Text> </Text>
       <Text color="gray">{t('skills.hint1')}</Text>
@@ -249,7 +272,10 @@ export function SkillsView({ skills }: { skills: Skill[] }) {
 }
 
 /** Specialists catalog: personas (role + optional pinned model). */
-export function SpecialistsView({ specialists }: { specialists: Specialist[] }) {
+export function SpecialistsView({ specialists, bodyHeight }: { specialists: Specialist[]; bodyHeight?: number }) {
+  const fallbackVisible = useVisibleRows(8);
+  const visible = bodyHeight ? Math.max(3, bodyHeight - 6) : fallbackVisible;
+  const { slice, above, below } = useScrollWindow(specialists, visible, 'top');
   return (
     <Box borderStyle="round" borderColor="magentaBright" flexDirection="column" paddingX={1}>
       <Text bold color="magentaBright">
@@ -258,7 +284,9 @@ export function SpecialistsView({ specialists }: { specialists: Specialist[] }) 
       {specialists.length === 0 ? (
         <Text color="gray">{t('spec.empty')}</Text>
       ) : (
-        specialists.map((s) => (
+        <>
+        <Above n={above} />
+        {slice.map((s) => (
           <Text key={s.file} wrap="truncate-end">
             {'  '}
             <Text color="magentaBright" bold>
@@ -268,7 +296,9 @@ export function SpecialistsView({ specialists }: { specialists: Specialist[] }) 
             {s.model ? <Text color="cyan">{s.model} </Text> : null}
             <Text color="gray">{truncate(s.description || s.file, 90)}</Text>
           </Text>
-        ))
+        ))}
+        <Below n={below} />
+        </>
       )}
       <Text> </Text>
       <Text color="gray">{t('spec.hint1')}</Text>
@@ -278,8 +308,11 @@ export function SpecialistsView({ specialists }: { specialists: Specialist[] }) 
 }
 
 /** Saved sessions: inspect available restore points; restore via /session. */
-export function SessionsView({ projectRoot }: { projectRoot: string }) {
+export function SessionsView({ projectRoot, bodyHeight }: { projectRoot: string; bodyHeight?: number }) {
   const sessions = Controller.listSessions(projectRoot);
+  const fallbackVisible = useVisibleRows(7);
+  const visible = bodyHeight ? Math.max(3, bodyHeight - 5) : fallbackVisible;
+  const { slice, above, below } = useScrollWindow(sessions, visible, 'top');
   return (
     <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={1}>
       <Text bold color="yellow">
@@ -288,16 +321,26 @@ export function SessionsView({ projectRoot }: { projectRoot: string }) {
       {sessions.length === 0 ? (
         <Text color="gray">{t('sessions.empty')}</Text>
       ) : (
-        sessions.map((s, i) => (
+        <>
+        <Above n={above} />
+        {slice.map((s, i) => (
           <Text key={s.file} wrap="truncate-end">
             {'  '}
             <Text color="yellow" bold>
-              {String(i + 1).padStart(2)}.
+              {String(sessions.indexOf(s) + 1).padStart(2)}.
             </Text>{' '}
-            <Text>{t('sessions.item', { date: new Date(s.data.savedAt).toLocaleString(), agents: s.data.agents.length })}</Text>
+            <Text>
+              {t('sessions.item', {
+                name: s.data.name ? `${s.data.name} · ` : '',
+                date: new Date(s.data.savedAt).toLocaleString(),
+                agents: s.data.agents.length,
+              })}
+            </Text>
             <Text color="gray"> {s.data.agents.map((a) => a.name).join(', ').slice(0, 80)}</Text>
           </Text>
-        ))
+        ))}
+        <Below n={below} />
+        </>
       )}
       <Text> </Text>
       <Text color="gray">{t('sessions.hint')}</Text>

@@ -5,7 +5,17 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { Controller } from '../controller.js';
 import { startSessionServer } from '../server.js';
 import { executeInput, type ViewName, type UIActions, type SystemLevel } from '../commands.js';
-import { PROVIDER_PRESETS, getProvider, providerNeedsApiKey, providerReady, rememberFolder, saveConfig } from '../config.js';
+import {
+  PROVIDER_PRESETS,
+  detectProviderModels,
+  getProvider,
+  isLocalProvider,
+  isPlaceholderModel,
+  providerNeedsApiKey,
+  providerReady,
+  rememberFolder,
+  saveConfig,
+} from '../config.js';
 import { LANGS, setLang, t } from '../i18n.js';
 import type { Lang, ParallelConfig, ProviderConfig, SessionData } from '../types.js';
 import { AgentRow, AgentTranscript } from './AgentPanel.js';
@@ -20,7 +30,7 @@ import type { AgentInfo } from '../types.js';
 
 const LOGO = 'Parallel';
 // Version from package.json. Hardcoded — rootDir: "src" prevents importing ../../package.json.
-const VERSION = '0.4.3';
+const VERSION = '0.4.4';
 
 type Phase = 'lang' | 'folder' | 'session' | 'provider' | 'model' | 'main';
 type ProviderStep =
@@ -84,7 +94,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   const ctlRef = useRef<Controller | null>(directFolder ? new Controller(config, directFolder) : null);
 
   // ---------- main state ----------
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
   const [view, setView] = useState<ViewName>('agents');
   // Focus mode (/focus <agent>): plain input is routed to that agent.
   const [focus, setFocus] = useState<string | null>(null);
@@ -134,6 +144,11 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
       clearInterval(timer);
     };
   }, [ctl]);
+
+  useEffect(() => {
+    if (!ctl || !focus) return;
+    if (!ctl.board.getAgentByName(focus)) setFocus(null);
+  }, [ctl, focus, tick]);
 
   // Session server: lets `parallel attach <agent>` open per-agent terminals.
   useEffect(() => {
@@ -261,7 +276,12 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
       } else if (providerStep.id === 'presetModel') {
         setProviderStep({ id: 'pick' });
       } else if (providerStep.id === 'endpoint') {
-        setProviderStep({ id: 'presetModel', provider: providerStep.provider });
+        const isPreset = PROVIDER_PRESETS.some((p) => p.name.toLowerCase() === providerStep.provider.name.toLowerCase());
+        setProviderStep(
+          isPreset
+            ? { id: 'presetModel', provider: providerStep.provider }
+            : { id: 'customModel', name: providerStep.provider.name, url: providerStep.provider.baseUrl },
+        );
       } else if (providerStep.id === 'editEndpoint') {
         setProviderStep({ id: 'endpoint', provider: providerStep.provider });
       } else if (providerStep.id === 'key') {
@@ -465,26 +485,15 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
                       ...ls.slice(-5),
                       { text: t('wiz.provider.ollama.checking', { url: preset.baseUrl }), level: 'info' as SystemLevel },
                     ]);
-                    let models = [...preset.models];
-                    let defaultModel = preset.defaultModel;
-                    try {
-                      const controller = new AbortController();
-                      const timeout = setTimeout(() => controller.abort(), 2000);
-                      const resp = await fetch(preset.baseUrl + '/models', { signal: controller.signal });
-                      clearTimeout(timeout);
-                      if (resp.ok) {
-                        const data = (await resp.json()) as { data?: { id: string }[] };
-                        const detected = data?.data?.map((m) => m.id).filter(Boolean) ?? [];
-                        if (detected.length > 0) {
-                          models = detected;
-                          defaultModel = detected[0];
-                          setSystemLines((ls) => [
-                            ...ls.slice(-5),
-                            { text: t('wiz.provider.ollama.found', { n: detected.length }), level: 'ok' as SystemLevel },
-                          ]);
-                        }
-                      }
-                    } catch {
+                    const detected = await detectProviderModels(preset);
+                    let models = detected?.models ?? [...preset.models];
+                    let defaultModel = detected?.defaultModel ?? preset.defaultModel;
+                    if (detected) {
+                      setSystemLines((ls) => [
+                        ...ls.slice(-5),
+                        { text: t('wiz.provider.ollama.found', { n: detected.models.length }), level: 'ok' as SystemLevel },
+                      ]);
+                    } else {
                       setSystemLines((ls) => [
                         ...ls.slice(-5),
                         { text: t('wiz.provider.ollama.notFound', { url: preset.baseUrl }), level: 'warn' as SystemLevel },
@@ -560,7 +569,17 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
                 allowInput
                 inputPlaceholder={providerStep.provider.baseUrl}
                 onBack={wizardBack}
-                onInput={(url) => setProviderStep({ id: 'endpoint', provider: { ...providerStep.provider, baseUrl: url.trim() } })}
+                onInput={(url) => {
+                  const baseUrl = url.trim();
+                  setProviderStep({
+                    id: 'endpoint',
+                    provider: {
+                      ...providerStep.provider,
+                      baseUrl,
+                      requiresApiKey: !isLocalProvider({ baseUrl }),
+                    },
+                  });
+                }}
               />
             </WizardStep>
           )}
@@ -615,18 +634,25 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
                 allowInput
                 inputPlaceholder={t('wiz.provider.model.ph')}
                 onBack={wizardBack}
-                onInput={(model) =>
+                onInput={(model) => {
+                  const trimmed = model.trim();
+                  if (isPlaceholderModel(trimmed)) {
+                    setSystemLines((ls) => [...ls.slice(-5), { text: t('set.modelPlaceholder'), level: 'warn' as SystemLevel }]);
+                    return;
+                  }
+                  const local = isLocalProvider({ baseUrl: providerStep.url });
                   setProviderStep({
-                    id: 'newKey',
+                    id: 'endpoint',
                     provider: {
                       name: providerStep.name,
                       baseUrl: providerStep.url,
                       apiKey: '',
-                      models: [model.trim()],
-                      defaultModel: model.trim(),
+                      models: [trimmed],
+                      defaultModel: trimmed,
+                      requiresApiKey: !local,
                     },
-                  })
-                }
+                  });
+                }}
               />
             </WizardStep>
           )}
@@ -820,8 +846,8 @@ function MainScreen({
 
   const [hubScroll, setHubScroll] = useState(0);
   const [hubFollowTail, setHubFollowTail] = useState(true);
-  const hubRows = Math.max(6, bodyHeight - 2);
-  const maxHubScroll = Math.max(0, agents.length - hubRows);
+  const hubRows = Math.max(3, bodyHeight - 2);
+  const maxHubScroll = Math.max(0, agents.length - Math.max(1, Math.floor(hubRows / 2)));
   const clampedHub = Math.min(hubScroll, maxHubScroll);
   const logSeq = ctl.board.logs.length > 0 ? ctl.board.logs[ctl.board.logs.length - 1].seq ?? ctl.board.logs.length : 0;
   useEffect(() => {
@@ -831,7 +857,7 @@ function MainScreen({
     if (hubFollowTail) setHubScroll(0);
   }, [logSeq, agents.length, hubFollowTail]);
 
-  // Scroll helpers (also used by mouse wheel handler below).
+  // Scroll helpers.
   const scrollFocusUp = () => {
     setFocusFollowTail(false);
     setScroll((s) => Math.min(s + 1, maxScroll));
@@ -855,19 +881,17 @@ function MainScreen({
     });
   };
 
-  // Keyboard: Esc / PgUp-PgDn / Up-Down arrows.
-  // When CommandInput is NOT focused, Up/Down scroll the hub or focused agent;
-  // when it IS focused, CommandInput's own useInput sees them first (history nav).
+  // Keyboard: PgUp/PgDn always scroll hub/focus. Up/Down only scroll when input is inactive.
   useInput((_input, key) => {
-    if (key.escape) onEscape();
+    if (key.escape && !settingsOpen) onEscape();
     if (focused) {
-      if (key.pageUp || key.upArrow) scrollFocusUp();
-      if (key.pageDown || key.downArrow) scrollFocusDown();
+      if (key.pageUp || (!inputActive && key.upArrow)) scrollFocusUp();
+      if (key.pageDown || (!inputActive && key.downArrow)) scrollFocusDown();
     } else if (view === 'agents') {
-      if (key.pageUp || key.upArrow) scrollHubUp();
-      if (key.pageDown || key.downArrow) scrollHubDown();
+      if (key.pageUp || (!inputActive && key.upArrow)) scrollHubUp();
+      if (key.pageDown || (!inputActive && key.downArrow)) scrollHubDown();
     }
-  }, { isActive: !inputActive });
+  }, { isActive: !approval && !question });
 
   const idleCount = agents.filter((a) => a.state === 'idle').length;
   const workingCount = agents.filter((a) => ['working', 'thinking', 'listening'].includes(a.state)).length;
@@ -945,19 +969,19 @@ function MainScreen({
         ) : view === 'settings-session' ? (
           <SettingsPanel ctl={ctl} scope="session" height={bodyHeight} onClose={onEscape} />
         ) : view === 'board' ? (
-          <BoardView board={ctl.board} />
+          <BoardView board={ctl.board} bodyHeight={bodyHeight} />
         ) : view === 'notes' ? (
-          <NotesView board={ctl.board} />
+          <NotesView board={ctl.board} bodyHeight={bodyHeight} />
         ) : view === 'sessions' ? (
-          <SessionsView projectRoot={ctl.projectRoot} />
+          <SessionsView projectRoot={ctl.projectRoot} bodyHeight={bodyHeight} />
         ) : view === 'diff' ? (
-          <DiffView board={ctl.board} />
+          <DiffView board={ctl.board} bodyHeight={bodyHeight} />
         ) : view === 'cost' ? (
-          <CostView board={ctl.board} />
+          <CostView board={ctl.board} bodyHeight={bodyHeight} />
         ) : view === 'skills' ? (
-          <SkillsView skills={ctl.getSkills()} />
+          <SkillsView skills={ctl.getSkills()} bodyHeight={bodyHeight} />
         ) : view === 'specialists' ? (
-          <SpecialistsView specialists={ctl.getSpecialists()} />
+          <SpecialistsView specialists={ctl.getSpecialists()} bodyHeight={bodyHeight} />
         ) : view === 'help' ? (
           <HelpView bodyHeight={bodyHeight} />
         ) : agents.length === 0 ? (
@@ -1090,34 +1114,37 @@ function AgentHub({
 }) {
   const groups = groupAgents([...agents].sort((a, b) => STATE_META[a.state].rank - STATE_META[b.state].rank || a.startedAt - b.startedAt));
   let skipped = scroll;
-  let rendered = 0;
+  let renderedAgents = 0;
+  let renderedLines = 0;
   const rows: React.ReactNode[] = [];
+  let full = false;
   for (const group of groups) {
-    const groupRows: React.ReactNode[] = [];
     for (const agent of group.agents) {
       if (skipped > 0) {
         skipped--;
         continue;
       }
-      if (rendered >= visibleRows) continue;
-      rendered++;
-      groupRows.push(
+      const needsSeparator = rows.length > 0;
+      const neededLines = 2 + (needsSeparator ? 1 : 0);
+      if (renderedLines + neededLines > visibleRows) {
+        full = true;
+        break;
+      }
+      if (needsSeparator) {
+        rows.push(
+          <Text key={`sep-${group.title}-${agent.id}`} color={CHROME.separator}>{'─'.repeat(cols - 2)}</Text>,
+        );
+        renderedLines++;
+      }
+      renderedAgents++;
+      renderedLines += 2;
+      rows.push(
         <AgentRow key={agent.id} agent={agent} logs={ctl.board.logsFor(agent.id, 8)} cols={cols} />,
       );
     }
-    if (groupRows.length === 0) continue;
-    if (rows.length > 0) {
-      rows.push(
-        <Text key={`sep-${group.title}`} color={CHROME.separator}>{'─'.repeat(cols - 2)}</Text>,
-      );
-    }
-    rows.push(
-      <Box key={group.title} flexDirection="column">
-        {groupRows}
-      </Box>,
-    );
+    if (full) break;
   }
-  const below = Math.max(0, agents.length - scroll - rendered);
+  const below = Math.max(0, agents.length - scroll - renderedAgents);
   return (
     <Box flexDirection="column">
       {scroll > 0 ? <Text color={CHROME.muted}>▲ {scroll} older · PgDn to latest</Text> : null}

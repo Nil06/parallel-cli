@@ -4,10 +4,20 @@ import { exec } from 'node:child_process';
 import * as Diff from 'diff';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { Blackboard } from '../coordination/blackboard.js';
-import type { Skill } from '../types.js';
+import type { AgentMode, Skill } from '../types.js';
 
 const IGNORED = new Set(['node_modules', '.git', '.parallel', 'dist', '__pycache__', '.venv', 'venv']);
 const MAX_OUTPUT = 12_000;
+const MUTATING_TOOLS = new Set(['write_file', 'edit_file', 'claim_files', 'remember']);
+
+function isMutatingShell(command: string): boolean {
+  const c = command.toLowerCase();
+  if (/\b(rm|mv|cp|chmod|chown|mkdir|touch|truncate)\b/.test(c)) return true;
+  if (/\b(git\s+(add|commit|push|pull|merge|rebase|checkout|switch|reset|clean|stash|tag))\b/.test(c)) return true;
+  if (/\b(npm|pnpm|yarn)\s+(install|add|remove|update|audit\s+fix)\b/.test(c)) return true;
+  if (/[>|]\s*(sh|bash)\b/.test(c) || /\b(curl|wget)\b.*\|\s*(sh|bash)/.test(c)) return true;
+  return false;
+}
 
 export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
   {
@@ -245,13 +255,14 @@ export type QuestionCallback = (
   question: string,
   options: string[],
   recommended: number,
-) => Promise<string>;
+) => Promise<{ answer: string; auto: boolean }>;
 
 export class ToolExecutor {
   /** Last content this agent has seen for each file — basis of adaptive merging. */
   private lastRead = new Map<string, string>();
   /** Questions already asked — capped at 3 per task. */
   private questionsAsked = 0;
+  private planApproved = false;
 
   constructor(
     private board: Blackboard,
@@ -261,11 +272,14 @@ export class ToolExecutor {
     private requestApproval: ApprovalCallback,
     private requestQuestion: QuestionCallback,
     private skills: Skill[],
+    private mode: AgentMode = 'task',
   ) {}
 
   private resolve(rel: string): string {
-    const abs = path.resolve(this.projectRoot, rel);
-    if (!abs.startsWith(path.resolve(this.projectRoot))) {
+    const root = path.resolve(this.projectRoot);
+    const abs = path.resolve(root, rel);
+    const relative = path.relative(root, abs);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
       throw new Error(`Path outside the project refused: ${rel}`);
     }
     return abs;
@@ -277,6 +291,8 @@ export class ToolExecutor {
 
   async execute(name: string, args: any): Promise<string> {
     try {
+      const guard = this.guardTool(name, args);
+      if (guard) return guard;
       switch (name) {
         case 'list_files':
           return this.listFiles(args?.path ?? '.');
@@ -317,6 +333,23 @@ export class ToolExecutor {
     }
   }
 
+  private guardTool(name: string, args: any): string | null {
+    if (this.mode === 'ask') {
+      if (MUTATING_TOOLS.has(name) || name === 'run_command') {
+        return `DENIED: this agent is in /ask mode. It can inspect and advise, but cannot modify files, run shell commands, claim files, or write memory.`;
+      }
+    }
+    if (this.mode === 'plan' && !this.planApproved) {
+      if (MUTATING_TOOLS.has(name)) {
+        return `DENIED: this agent is in /plan mode and the plan has not been approved yet. Present the plan with ask_user and wait for "Approve" before modifying project state.`;
+      }
+      if (name === 'run_command' && isMutatingShell(String(args?.command ?? ''))) {
+        return `DENIED: this shell command looks mutating. In /plan mode, run only read-only inspection before approval; ask_user for plan approval first.`;
+      }
+    }
+    return null;
+  }
+
   /**
    * Ask the user a multiple-choice question. NEVER blocks forever: the UI shows
    * a visible 30s countdown and falls back to the recommended option (auto-run).
@@ -335,9 +368,14 @@ export class ToolExecutor {
     this.questionsAsked++;
     this.board.setAgentState(this.agentId, 'waiting', `question: ${question.slice(0, 60)}`);
     this.board.log(this.agentId, 'note', `❓ ${question}`);
-    const answer = await this.requestQuestion(this.agentId, question, options, recommended);
+    const response = await this.requestQuestion(this.agentId, question, options, recommended);
+    const answer = response.answer;
+    if (this.mode === 'plan' && !response.auto && answer.trim().toLowerCase().startsWith('approve')) {
+      this.planApproved = true;
+    }
     this.board.setAgentState(this.agentId, 'working');
-    return `The user answered: "${answer}". Act on this choice now (${3 - this.questionsAsked} question(s) left for this task).`;
+    const source = response.auto ? 'The timeout auto-selected' : 'The user answered';
+    return `${source}: "${answer}". Act on this choice now (${3 - this.questionsAsked} question(s) left for this task).`;
   }
 
   /** Declare (advisory) work areas — visible to the user and the other agents. */

@@ -2,6 +2,39 @@
 
 All notable changes to Parallel are documented here.
 
+## 0.4.4 - 2026-06-23
+
+### 0.4.4 Added
+
+- Added tool-level safeguards for `/ask` and `/plan`: ask agents cannot mutate project state, and plan agents must get explicit approval before mutating files or running risky shell commands.
+- Added session-only provider setup for `/settings-session`, with an explicit choice between temporary session use and saving globally.
+- Expanded `/doctor` into actionable readiness diagnostics for provider, model, key, local endpoints, attach socket, `git`, and `gh`.
+- Added scrolling/windowing budgets to long TUI views such as board, notes, diffs, cost, skills, specialists, and sessions.
+- Added saved-session restore hints and clearer `/restore` errors.
+
+### 0.4.4 Changed
+
+- Reworked the README to render consistently on both GitHub and npm.
+- Replaced wide Markdown tables and fixed-width command blocks with npm-friendly lists.
+- Removed provider-specific environment variable guidance from the public README so provider setup remains neutral.
+- Documented DeepSeek only as one provider preset in the Chinese provider group, not as a special standalone setup path.
+- Made `@all` steer active agents directly instead of only posting a passive note.
+- Made `/plan` timeouts safe by requiring manual approval before mutations are unlocked.
+- Increased the saved sessions list window from 8 to 20 and shows `/save [name]` labels in `/sessions`.
+- Bumped the TUI header version to `0.4.4`.
+
+### 0.4.4 Fixed
+
+- Fixed `/commit message...` with exactly one agent so the first word is treated as part of the message, not as a missing agent name.
+- Fixed `/project` and `/wizard` transitions by warning when active agents are running unless `--force` is passed.
+- Fixed local/custom provider setup so localhost endpoints do not require an API key and placeholder models are not considered ready.
+- Fixed stale focus after agents disappear through clear, stop, project switch, session load, or restore.
+- Fixed `/settings-session` key entry so provider setup reaches the session-only vs global-save choice instead of returning early.
+- Fixed first-run custom provider setup so it reviews/edits endpoints and skips API keys for localhost endpoints.
+- Fixed filesystem boundary checks so agent tools reject sibling paths with a shared project-root prefix.
+- Fixed TUI clipping risks by budgeting the hub by rendered rows and applying body-height windowing to notes/diffs.
+- Fixed Settings Escape handling so typed inputs clear before navigating back.
+
 ## 0.4.3 - 2026-06-23
 
 ### 0.4.3 Added
@@ -32,7 +65,7 @@ All notable changes to Parallel are documented here.
 - Fixed session settings accidentally behaving like global provider mutation in several flows.
 - Fixed bare model IDs containing `:` such as `qwen3-coder:480b`.
 - Fixed stale default provider normalization during config load and provider removal.
-- Fixed `DEEPSEEK_API_KEY` overriding whichever provider happened to be default; it now targets DeepSeek only.
+- Fixed provider-specific environment overrides leaking into whichever provider happened to be default.
 - Fixed local endpoints being blocked by missing API keys.
 - Fixed sensitive `/key ...` entries being stored in input history.
 - Fixed tiny pseudo-TTY dimensions causing negative string repeat values in the TUI header.
@@ -49,7 +82,7 @@ All notable changes to Parallel are documented here.
 
 ### 0.4.2 Changed
 
-- Reworked the README provider section to be provider-agnostic instead of DeepSeek-centered.
+- Reworked the README provider section to be provider-agnostic.
 - Updated provider tables, endpoint documentation, and model catalog references.
 - Removed internal docs from remote tracking and kept them out of the public package.
 

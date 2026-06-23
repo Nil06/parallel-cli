@@ -76,6 +76,7 @@ export class Controller extends EventEmitter {
   private conversationFiles = new Map<string, string>();
   /** The session restored at startup (source of /restore conversations). */
   loadedSession: SessionData | null = null;
+  private sessionOnlyProvider: ProviderConfig | null = null;
 
   constructor(
     public config: ParallelConfig,
@@ -113,6 +114,12 @@ export class Controller extends EventEmitter {
 
   /** Provider used by the current session (falls back to the global default). */
   sessionProvider(): ProviderConfig | undefined {
+    if (
+      this.sessionOnlyProvider &&
+      this.session.providerName.toLowerCase() === this.sessionOnlyProvider.name.toLowerCase()
+    ) {
+      return this.sessionOnlyProvider;
+    }
     return getProvider(this.config, this.session.providerName || undefined);
   }
 
@@ -121,7 +128,11 @@ export class Controller extends EventEmitter {
     const trimmed = spec.trim();
     const sep = trimmed.indexOf(':');
     if (sep > 0) {
-      const provider = getProvider(this.config, trimmed.slice(0, sep).trim());
+      const left = trimmed.slice(0, sep).trim();
+      const provider =
+        this.sessionOnlyProvider && this.sessionOnlyProvider.name.toLowerCase() === left.toLowerCase()
+          ? this.sessionOnlyProvider
+          : getProvider(this.config, left);
       if (provider) return { provider, model: trimmed.slice(sep + 1).trim() };
     }
     // bare model name: current session provider first, then any provider listing it
@@ -219,8 +230,8 @@ export class Controller extends EventEmitter {
     question: string,
     options: string[],
     recommended: number,
-  ): Promise<string> => {
-    return new Promise<string>((resolve) => {
+  ): Promise<{ answer: string; auto: boolean }> => {
+    return new Promise<{ answer: string; auto: boolean }>((resolve) => {
       const agent = this.board.agents.get(agentId);
       this.questions.push({
         id: ++this.questionSeq,
@@ -246,7 +257,7 @@ export class Controller extends EventEmitter {
       'system',
       auto ? t('m.qAuto', { name: q.agentName, answer }) : t('m.qAnswered', { name: q.agentName, answer }),
     );
-    q.resolve(answer);
+    q.resolve({ answer, auto });
     this.emit('update');
   }
 
@@ -404,9 +415,9 @@ export class Controller extends EventEmitter {
    * conversation is reloaded from the saved JSONL, so it continues with its
    * memory intact instead of starting from scratch.
    */
-  respawnAgent(name: string): Agent | null | 'no-conversation' {
+  respawnAgent(name: string): Agent | null | 'no-agent' | 'no-conversation' {
     const sa = this.loadedSession?.agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
-    if (!sa) return 'no-conversation';
+    if (!sa) return 'no-agent';
     if (!sa.conversation || !fs.existsSync(sa.conversation)) return 'no-conversation';
     let history: any[];
     try {
@@ -446,7 +457,7 @@ export class Controller extends EventEmitter {
   stopAll(): void {
     for (const a of this.agents.values()) a.stop();
     for (const req of this.approvals.splice(0)) req.resolve(false);
-    for (const q of this.questions.splice(0)) q.resolve(q.options[q.recommended] ?? '');
+    for (const q of this.questions.splice(0)) q.resolve({ answer: q.options[q.recommended] ?? '', auto: true });
   }
 
   sendToAgent(name: string, content: string): boolean {
@@ -456,8 +467,16 @@ export class Controller extends EventEmitter {
     return true;
   }
 
-  broadcast(content: string): void {
+  broadcast(content: string): number {
     this.board.addNote('user', 'all', content);
+    let n = 0;
+    for (const [id, agent] of this.agents.entries()) {
+      const info = this.board.agents.get(id);
+      if (!info || ['done', 'error', 'stopped'].includes(info.state)) continue;
+      agent.instruct(content);
+      n++;
+    }
+    return n;
   }
 
   hasRunningAgents(): boolean {
@@ -490,8 +509,10 @@ export class Controller extends EventEmitter {
         (c2) => c2.id > c.id && c2.path === c.path && c2.agentId !== info.id,
       );
       try {
-        const abs = path.resolve(this.projectRoot, c.path);
-        if (!abs.startsWith(path.resolve(this.projectRoot))) return 'none';
+        const root = path.resolve(this.projectRoot);
+        const abs = path.resolve(root, c.path);
+        const rel = path.relative(root, abs);
+        if (rel.startsWith('..') || path.isAbsolute(rel)) return 'none';
         fs.writeFileSync(abs, c.before);
       } catch {
         return 'none';
@@ -657,7 +678,7 @@ export class Controller extends EventEmitter {
           return { file, data: JSON.parse(fs.readFileSync(file, 'utf8')) as SessionData };
         })
         .sort((a, b) => (a.data.savedAt < b.data.savedAt ? 1 : -1))
-        .slice(0, 8);
+        .slice(0, 20);
     } catch {
       return [];
     }
@@ -705,10 +726,19 @@ export class Controller extends EventEmitter {
   setSessionProvider(name: string): boolean {
     const p = getProvider(this.config, name);
     if (!p) return false;
+    this.sessionOnlyProvider = null;
     this.session.providerName = p.name;
     this.session.model = p.defaultModel || p.models[0] || '';
     this.emit('update');
     return true;
+  }
+
+  setSessionProviderConfig(p: ProviderConfig): void {
+    this.sessionOnlyProvider = p;
+    this.session.providerName = p.name;
+    this.session.model = p.defaultModel || p.models[0] || '';
+    this.llmCache.clear();
+    this.emit('update');
   }
 
   setSessionApprovalMode(mode: ShellApprovalMode): void {
@@ -725,6 +755,7 @@ export class Controller extends EventEmitter {
 
   saveProvider(p: ProviderConfig): void {
     upsertProvider(this.config, p);
+    if (this.sessionOnlyProvider?.name.toLowerCase() === p.name.toLowerCase()) this.sessionOnlyProvider = null;
     this.llmCache.clear();
     // if the session points at this provider, refresh its view
     if (this.session.providerName.toLowerCase() === p.name.toLowerCase()) {

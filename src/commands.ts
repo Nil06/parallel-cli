@@ -1,6 +1,9 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { Controller, normalizeShellApprovalMode } from './controller.js';
 import { createSkillTemplate, createSpecialistTemplate } from './skills.js';
-import { providerReady } from './config.js';
+import { isLocalProvider, isPlaceholderModel, providerNeedsApiKey } from './config.js';
 import { t } from './i18n.js';
 import type { AgentMode } from './types.js';
 
@@ -111,6 +114,74 @@ function agentList(ctl: Controller): string {
   return [...ctl.board.agents.values()].map((a) => a.name).join(', ') || t('m.none');
 }
 
+function commandExists(name: string): boolean {
+  try {
+    execFileSync('which', [name], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function localEndpointReachable(baseUrl: string): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const controller = new AbortController();
+    timeout = setTimeout(() => controller.abort(), 1500);
+    const resp = await fetch(baseUrl.replace(/\/+$/, '') + '/models', { signal: controller.signal });
+    return resp.ok;
+  } catch {
+    return false;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function doctorReport(ctl: Controller, ui: UIActions): Promise<void> {
+  const p = ctl.sessionProvider();
+  const lines: string[] = [];
+  let level: SystemLevel = 'ok';
+
+  if (!p) {
+    ui.system(t('m.doctorReport', { lines: t('m.doctorNoProvider') }), 'error');
+    return;
+  }
+
+  const activeModel = ctl.session.model || p.defaultModel || p.models[0] || '';
+  lines.push(t('m.doctorProvider', { provider: p.name, model: activeModel || '—' }));
+
+  if (providerNeedsApiKey(p) && !p.apiKey) {
+    level = 'error';
+    lines.push(t('m.doctorKeyMissing'));
+  } else {
+    lines.push(providerNeedsApiKey(p) ? t('m.doctorKeyOk') : t('m.doctorKeySkipped'));
+  }
+
+  if (isPlaceholderModel(activeModel)) {
+    level = 'error';
+    lines.push(t('m.doctorModelMissing'));
+  } else {
+    lines.push(t('m.doctorModelOk', { model: activeModel }));
+  }
+
+  if (isLocalProvider(p)) {
+    const reachable = await localEndpointReachable(p.baseUrl);
+    if (reachable) {
+      lines.push(t('m.doctorEndpointOk', { url: p.baseUrl }));
+    } else {
+      if (level !== 'error') level = 'warn';
+      lines.push(t('m.doctorEndpointFail', { url: p.baseUrl }));
+    }
+  }
+
+  const sock = path.join(ctl.projectRoot, '.parallel', 'session.sock');
+  lines.push(fs.existsSync(sock) ? t('m.doctorAttachOk') : t('m.doctorAttachMissing'));
+  lines.push(commandExists('git') ? t('m.doctorGitOk') : t('m.doctorGitMissing'));
+  lines.push(commandExists('gh') ? t('m.doctorGhOk') : t('m.doctorGhMissing'));
+
+  ui.system(t('m.doctorReport', { lines: lines.join('\n') }), level);
+}
+
 /**
  * Single-agent ergonomics: when the session has exactly ONE agent, commands
  * that target an agent (/undo, /focus, /pause…) work without naming it.
@@ -130,8 +201,11 @@ function spawnFrom(
 ): void {
   const p = ctl.sessionProvider();
   if (!p) return ui.system(t('m.missingProvider'), 'error');
-  if (!providerReady(p)) return ui.system(t('m.missingKey', { name: p.name }), 'error');
-  if (!ctl.session.model && !p.defaultModel && !p.models[0]) return ui.system(t('m.missingModel', { name: p.name }), 'error');
+  if (providerNeedsApiKey(p) && !p.apiKey) return ui.system(t('m.missingKey', { name: p.name }), 'error');
+  const activeModel = ctl.session.model || p.defaultModel || p.models[0] || '';
+  if (isPlaceholderModel(activeModel)) {
+    return ui.system(t('m.missingModel', { name: p.name }), 'error');
+  }
   // optional --model=xxx flag
   let model: string | undefined;
   let task = arg;
@@ -179,8 +253,8 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     if (!m) return ui.system(t('m.usageAt'), 'warn');
     const [, target, content] = m;
     if (target.toLowerCase() === 'all') {
-      ctl.broadcast(content);
-      ui.system(t('m.broadcast'), 'ok');
+      const n = ctl.broadcast(content);
+      ui.system(t('m.broadcast', { n }), n > 0 ? 'ok' : 'warn');
     } else if (ctl.sendToAgent(target, content)) {
       ui.system(t('m.sent', { target }), 'ok');
     } else {
@@ -260,9 +334,19 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     case '/commit': {
       // Commit the files touched by one agent (or all) — staged by explicit path.
       const [target0, ...msg] = rest;
-      const target = target0 || soloAgent(ctl);
+      const solo = soloAgent(ctl);
+      const target =
+        target0 && (target0.toLowerCase() === 'all' || ctl.board.getAgentByName(target0))
+          ? target0
+          : target0 && solo
+            ? solo
+            : target0 || solo;
+      const message =
+        target0 && target === solo && target0.toLowerCase() !== solo?.toLowerCase() && !ctl.board.getAgentByName(target0)
+          ? rest.join(' ').trim()
+          : msg.join(' ').trim();
       if (!target) return ui.system(t('m.usageCommit'), 'warn');
-      const r = ctl.commitFor(target, msg.join(' ').trim() || undefined);
+      const r = ctl.commitFor(target, message || undefined);
       if (r.ok) return ui.system(t('m.committed', { name: target, files: String(r.files) }), 'ok');
       if (r.reason === 'not-found') return ui.system(t('m.notFound', { target, list: agentList(ctl) }), 'error');
       if (r.reason === 'no-changes') return ui.system(t('m.commitNone', { name: target }), 'info');
@@ -287,13 +371,16 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
         ui.setView('sessions');
         return;
       }
+      const force = rest.includes('--force');
+      const selector = rest.filter((part) => part !== '--force').join(' ').trim();
       const sessions = Controller.listSessions(ctl.projectRoot);
       if (sessions.length === 0) return ui.system(t('m.usageSession'), 'warn');
-      const idx = arg.toLowerCase() === 'latest' ? 0 : Number.parseInt(arg, 10) - 1;
+      const idx = selector.toLowerCase() === 'latest' ? 0 : Number.parseInt(selector, 10) - 1;
       const session = sessions[idx];
       if (!session) return ui.system(t('m.usageSession'), 'warn');
+      if (ctl.hasRunningAgents() && !force) return ui.system(t('m.sessionActive'), 'warn');
       ctl.loadSession(session.data);
-      ui.system(t('m.sessionLoaded', { date: new Date(session.data.savedAt).toLocaleString() }), 'ok');
+      ui.system(t('m.sessionLoaded', { date: new Date(session.data.savedAt).toLocaleString() }) + '\n' + t('m.sessionRestoreHint'), 'ok');
       return;
     }
     case '/restore': {
@@ -301,6 +388,7 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       if (!arg) return ui.system(t('m.usageRestore'), 'warn');
       if (!ctl.loadedSession) return ui.system(t('m.usageSession'), 'warn');
       const res = ctl.respawnAgent(arg);
+      if (res === 'no-agent') return ui.system(t('m.noRestoredAgent', { name: arg }), 'error');
       if (res === 'no-conversation') return ui.system(t('m.noConversation', { name: arg }), 'error');
       if (!res) return ui.system(t('m.spawnFail'), 'error');
       ui.system(t('m.restored', { name: res.name }), 'ok');
@@ -344,12 +432,7 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       return;
     }
     case '/doctor': {
-      const p = ctl.sessionProvider();
-      if (!p) return ui.system(t('m.missingProvider'), 'error');
-      if (!providerReady(p)) return ui.system(t('m.missingKey', { name: p.name }), 'error');
-      if (!ctl.session.model && !p.defaultModel && !p.models[0])
-        return ui.system(t('m.missingModel', { name: p.name }), 'error');
-      ui.system(t('m.doctorOk', { pm: `${p.name}:${ctl.session.model || p.defaultModel || p.models[0]}` }), 'ok');
+      void doctorReport(ctl, ui);
       return;
     }
     case '/cost':
@@ -492,9 +575,15 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       ui.setView('settings-session');
       return;
     case '/project':
-      ui.openProject?.(arg || undefined);
+      {
+        const force = rest.includes('--force');
+        const folderArg = rest.filter((part) => part !== '--force').join(' ').trim();
+        if (ctl.hasRunningAgents() && !force) return ui.system(t('m.projectActive'), 'warn');
+        ui.openProject?.(folderArg || undefined);
+      }
       return;
     case '/wizard':
+      if (ctl.hasRunningAgents() && arg !== '--force') return ui.system(t('m.wizardActive'), 'warn');
       ui.openWizard?.();
       return;
     // SESSION-only approvals & sound (global defaults editable in /settings).

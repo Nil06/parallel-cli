@@ -44,8 +44,8 @@ Usage:
                           auto-approved commands, summary (or JSON) on stdout — for CI
 
 Environment variables:
-  PARALLEL_API_KEY / DEEPSEEK_API_KEY   API key
-  PARALLEL_MODEL                        Default model (e.g. deepseek-chat)
+  PARALLEL_API_KEY                      API key for the default provider
+  PARALLEL_MODEL                        Default model
   PARALLEL_BASE_URL                     OpenAI-compatible endpoint
   PARALLEL_NO_ALT_SCREEN=1              Disable the alternate terminal screen.
 
@@ -108,7 +108,7 @@ if (headless) {
   ctl.setSessionApprovalMode('yolo');
   const provider = ctl.sessionProvider();
   if (!provider || !providerReady(provider)) {
-    console.error('Headless mode needs a configured provider + API key. Run `parallel` interactively once, or set PARALLEL_API_KEY.');
+    console.error('Headless mode needs a ready provider and model. Run `parallel` interactively once, or set PARALLEL_API_KEY / PARALLEL_MODEL.');
     process.exit(1);
   }
   // Agent questions cannot be asked: auto-answer with the recommended option.

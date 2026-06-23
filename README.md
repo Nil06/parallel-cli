@@ -96,13 +96,13 @@ Broadcast to every agent:
 @all stop changing public interfaces until the test agent finishes
 ```
 
+`@all` steers active agents in real time. Finished, stopped, or errored agents are not relaunched by a broadcast.
+
 ## Agent Modes
 
-| Mode | Use it for | Behavior |
-| --- | --- | --- |
-| `/ask` | Questions, reviews, audits, tradeoffs | Answers and advises without editing files. |
-| `/task` | Implementation work | Executes, edits, validates, and summarizes. |
-| `/plan` | Risky or unclear work | Inspects first, presents a plan, then edits only after approval. |
+- `/ask`: questions, reviews, audits, and tradeoffs. The agent answers and advises; mutating tools and shell commands are blocked.
+- `/task`: implementation work. The agent can execute, edit, validate, and summarize.
+- `/plan`: risky or unclear work. The agent inspects first, presents a plan, then edits only after explicit approval. A timeout does not approve the plan.
 
 Aliases:
 
@@ -124,19 +124,19 @@ The main TUI is the Parallel hub. It is designed to answer:
 
 Common hub commands:
 
-```text
-/agents              agent overview
-/focus a1            inspect and steer one agent
-/raw                 toggle raw detail in focus view
-/board               shared blackboard, claims, notes, file activity
-/diff                live diff history
-/cost                token and cost breakdown
-/sessions            saved sessions
-/settings            global settings
-/settings-session    session-only settings
-/project [folder]    change project folder
-/wizard              rerun setup wizard
-```
+- `/agents`: agent overview.
+- `/focus a1`: inspect and steer one agent.
+- `/raw`: toggle raw detail in focus view.
+- `/board`: shared blackboard, claims, notes, and file activity.
+- `/diff`: live diff history.
+- `/cost`: token and cost breakdown.
+- `/sessions`: saved sessions.
+- `/settings`: global settings.
+- `/settings-session`: session-only settings.
+- `/project [folder]`: change project folder.
+- `/wizard`: rerun setup wizard.
+
+Commands are typed in the control room input. When a long view is open, use Escape to return to the agents view/input.
 
 Keyboard behavior:
 
@@ -144,7 +144,7 @@ Keyboard behavior:
 - Up/Down selects suggestions when a suggestion menu is open.
 - Enter accepts the selected suggestion.
 - Tab or Right accepts the best completion.
-- Up/Down scrolls long views such as `/help`.
+- PgUp/PgDn scrolls the hub or focus view even while the input is active. Up/Down scrolls long views and navigates suggestions/history.
 - Escape returns to the agents view or clears the input.
 
 Best terminal size is around `120x34`. Parallel adapts to smaller terminals, but the hub is most readable with enough width for model, folder, status, and agent summaries.
@@ -202,101 +202,86 @@ Provider setup is guided in both the first-run wizard and `/settings`:
 4. Enter the provider API key if the provider requires one.
 5. Save globally or use the provider/model for the current session.
 
-Local providers such as Ollama and vLLM/SGLang do not require an API key. You can still review and edit their endpoints.
+Local providers such as Ollama, vLLM/SGLang, and custom localhost OpenAI-compatible endpoints do not require an API key. You can still review and edit their endpoints. Ollama/local OpenAI-compatible endpoints can detect models from `/models`; vLLM/SGLang requires replacing the `your-model-here` placeholder before it is considered ready.
 
 Useful settings commands:
 
-```text
-/settings            global language, providers, keys, defaults, approvals
-/settings-session    temporary model, provider, approvals, sound
-/model               show current session model
-/model provider:id   switch model for this session
-/doctor              check provider/model/API key readiness
-```
+- `/settings`: global language, providers, keys, defaults, and approvals.
+- `/settings-session`: temporary model, provider, approvals, and sound. New providers can be used for this session only or saved globally.
+- `/model`: show the current session model.
+- `/model provider:id`: switch model for this session.
+- `/doctor`: check provider, model, API key, local endpoint reachability, attach socket, `git`, and `gh`.
 
 Configuration is stored in `~/.parallel/config.json`.
 
 Environment variables:
 
-| Variable | Purpose |
-| --- | --- |
-| `PARALLEL_API_KEY` | API key for the current default provider. |
-| `DEEPSEEK_API_KEY` | API key for the DeepSeek provider only. |
-| `PARALLEL_BASE_URL` | Override the default provider base URL. |
-| `PARALLEL_MODEL` | Override the session model. |
-| `PARALLEL_NO_ALT_SCREEN=1` | Disable the alternate terminal screen. |
+- `PARALLEL_API_KEY`: API key for the current default provider.
+- `PARALLEL_BASE_URL`: override the default provider base URL.
+- `PARALLEL_MODEL`: override the session model.
+- `PARALLEL_NO_ALT_SCREEN=1`: disable the alternate terminal screen.
 
 ## Commands
 
 ### Create Agents
 
-| Command | Description |
-| --- | --- |
-| `/ask [Name:] <question> [--model=m]` | Launch an ask-only agent. |
-| `/task [Name:] <task> [--model=m] [#skill]` | Launch a task agent. Plain text does the same. |
-| `/plan [Name:] <task> [--model=m]` | Launch a plan-first agent. |
-| `/issue <n>` | Spawn a task from a GitHub issue using the `gh` CLI. |
-| `/specialist <name> <task>` | Spawn with a specialist persona. |
-| `/specialist new <name> [global]` | Create a specialist template. |
-| `/skill new <name> [global]` | Create a skill template. |
+- `/ask [Name:] <question> [--model=m]`: launch an ask-only agent.
+- `/task [Name:] <task> [--model=m] [#skill]`: launch a task agent. Plain text does the same.
+- `/plan [Name:] <task> [--model=m]`: launch a plan-first agent. It cannot mutate files or run risky shell commands until you manually approve the plan.
+- `/issue <n>`: spawn a task from a GitHub issue. Requires the `gh` CLI, a GitHub repository, and `gh auth login`.
+- `/specialist <name> <task>`: spawn with a specialist persona.
+- `/specialist new <name> [global]`: create a specialist template.
+- `/skill new <name> [global]`: create a skill template.
 
 ### Steer Agents
 
-| Command | Description |
-| --- | --- |
-| `@agent <message>` | Send a live instruction to one agent. |
-| `@all <message>` | Broadcast an instruction to all agents. |
-| `/send <agent\|all> <message>` | Command form of live steering. |
-| `/attach <agent\|on\|off>` | Open an agent terminal or toggle automatic terminals. |
-| `/focus <agent\|off>` | Route plain input to one agent instead of spawning new agents. |
-| `/pause <agent\|all>` | Pause at the next action boundary. |
-| `/resume <agent\|all>` | Resume paused agents. |
-| `/stop <agent\|all>` | Stop running agents. |
-| `/clear` | Remove finished agents from the current display. |
-| `/raw` | Toggle conversation-raw view. |
-| `/copy` | Copy the latest completed result to clipboard. |
+- `@agent <message>`: send a live instruction to one agent.
+- `@all <message>`: broadcast an instruction to all agents.
+- `/send <agent|all> <message>`: command form of live steering.
+- `/attach <agent|on|off>`: open an agent terminal or toggle automatic terminals.
+- `/focus <agent|off>`: route plain input to one agent instead of spawning new agents.
+- `/pause <agent|all>`: pause at the next action boundary.
+- `/resume <agent|all>`: resume paused agents.
+- `/stop <agent|all>`: stop running agents.
+- `/clear`: remove finished agents from the current display.
+- `/raw`: toggle conversation-raw view.
+- `/copy`: copy the latest completed result to clipboard.
 
 ### Git Safety
 
-| Command | Description |
-| --- | --- |
-| `/undo [agent]` | Revert the last file change made by an agent, with conflict detection. |
-| `/commit [agent\|all] [message]` | Commit files touched by an agent or by all agents. |
-| `/autocommit <on\|off>` | Commit each agent's changes automatically when it finishes. |
+- `/undo [agent]`: revert the last file change made by an agent, with conflict detection.
+- `/commit [agent|all] [message]`: commit only files touched by the selected agent or by all agents. It does not run `git add -A`. With exactly one agent, `/commit message...` uses that agent and treats the rest as the message.
+- `/autocommit <on|off>`: commit each agent's touched files automatically when it finishes. This is session-only.
 
 ### Views And Sessions
 
-| Command | Description |
-| --- | --- |
-| `/agents` | Agent overview. |
-| `/board` | Shared blackboard, file activity, claims, and notes. |
-| `/notes` | Full notes history. |
-| `/diff` | Live diff history. |
-| `/cost` | Token and cost breakdown. |
-| `/status` | Session model, approval mode, agents, cost snapshot. |
-| `/skills` | Available skills. |
-| `/specialists` | Available specialists. |
-| `/save [name]` | Save the current session. |
-| `/sessions` | List saved sessions. |
-| `/session <n\|latest>` | Restore a saved session. |
-| `/restore <agent>` | Relaunch a restored agent with its conversation history. |
+- `/agents`: agent overview.
+- `/board`: shared blackboard, file activity, claims, and notes.
+- `/notes`: full notes history.
+- `/diff`: live diff history.
+- `/cost`: token and cost breakdown.
+- `/status`: session model, approval mode, agents, and cost snapshot.
+- `/skills`: available skills.
+- `/specialists`: available specialists.
+- `/save [name]`: save the current session.
+- `/sessions`: list saved sessions.
+- `/session <n|latest>`: load a saved session snapshot. If active agents are running, use `/session <n|latest> --force` after saving/stopping what you need.
+- `/restore <agent>`: relaunch a restored agent with its conversation history.
 
 ### Settings And Exit
 
-| Command | Description |
-| --- | --- |
-| `/model [[provider:]model]` | Show or switch the session model. |
-| `/approvals <ask\|auto\|auto-safe\|yolo>` | Set shell approvals for this session. |
-| `/sound <on\|off>` | Toggle terminal bell notifications. |
-| `/settings` | Edit global language, providers, keys, defaults, and approvals. |
-| `/settings-session` | Edit session-only model, approvals, and sound. |
-| `/project [folder]` | Change project folder or reopen the folder picker. |
-| `/folder [folder]` | Alias for `/project`. |
-| `/wizard` | Relaunch the setup wizard. |
-| `/setup` | Alias for `/wizard`. |
-| `/doctor` | Check provider, key, and model configuration. |
-| `/help` | Full command reference. |
-| `/quit` | Save the session and exit. |
+- `/model [[provider:]model]`: show or switch the session model.
+- `/approvals <ask|auto|auto-safe|yolo>`: set shell approvals for this session.
+- `/sound <on|off>`: toggle terminal bell notifications.
+- `/settings`: edit global language, providers, keys, defaults, and approvals.
+- `/settings-session`: edit session-only model, provider, approvals, and sound.
+- `/project [folder]`: change project folder or reopen the folder picker. If agents are active, use `/project [folder] --force` after saving/stopping what you need.
+- `/folder [folder]`: alias for `/project`.
+- `/wizard`: relaunch the setup wizard. If agents are active, use `/wizard --force` after saving/stopping what you need.
+- `/setup`: alias for `/wizard`.
+- `/doctor`: run local readiness diagnostics for provider, key, model, endpoint, attach socket, and Git tooling.
+- `/help`: full command reference.
+- `/quit`: save the session and exit.
 
 When there is exactly one agent, commands such as `/undo`, `/focus`, `/pause`, `/resume`, `/stop`, and `/commit` can omit the agent name.
 
@@ -310,11 +295,9 @@ Parallel separates agent modes from shell approval behavior.
 /approvals yolo
 ```
 
-| Mode | Behavior |
-| --- | --- |
-| `ask` | Ask before shell commands unless explicitly allowed. |
-| `auto-safe` | Auto-approve safe inspection/build/test commands and ask for risky commands. |
-| `yolo` | Auto-approve every shell command. Intended for trusted/headless usage only. |
+- `ask`: ask before shell commands unless explicitly allowed.
+- `auto-safe`: auto-approve safe inspection/build/test commands and ask for risky commands.
+- `yolo`: auto-approve every shell command. Intended for trusted/headless usage only.
 
 `auto` is accepted as a compatibility spelling for `auto-safe`.
 

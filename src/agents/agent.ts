@@ -43,7 +43,7 @@ ${
 - Explore first with read-only tools.
 - Before modifying any file or running mutating commands, call ask_user with a concrete implementation plan.
 - The plan must include steps, files you expect to touch, risks, and validation.
-- Use options ["Approve", "Revise"], recommended "Approve".
+- Use options ["Approve", "Revise"], recommended "Revise" so timeout never approves changes.
 - Start editing only after explicit "Approve".
 - Finish with task_complete using this user-facing structure in ${userLang}: "Plan appliqué", "Ce que j’ai modifié", "Validation", "Risques restants".`
       : `TASK MODE:
@@ -158,6 +158,7 @@ export class Agent {
       opts.requestApproval,
       opts.requestQuestion,
       opts.skills,
+      opts.mode,
     );
 
     const info: AgentInfo = {

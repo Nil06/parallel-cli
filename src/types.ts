@@ -95,7 +95,7 @@ export interface AgentQuestion {
   options: string[];
   /** Index of the recommended option (auto-selected when the countdown ends). */
   recommended: number;
-  resolve: (answer: string) => void;
+  resolve: (response: { answer: string; auto: boolean }) => void;
 }
 
 export type ShellApprovalMode = 'ask' | 'auto-safe' | 'yolo';
