@@ -2,6 +2,31 @@
 
 All notable changes to Parallel are documented here.
 
+## 0.4.5 - 2026-06-23
+
+### 0.4.5 Added
+
+- Added explicit hub, focus, and attach input contexts with context-specific hints and filtered command suggestions.
+- Added agent argument autocomplete for `/focus`, `/send`, `/attach`, `/pause`, `/resume`, `/stop`, `/restore`, and `/commit`.
+- Added attach-terminal routing for `@all`, `@agent`, and `/send`, so dedicated terminals can broadcast or steer another agent through the main session.
+- Added richer hub rows using latest useful agent signals, specialist badges, context percentage, and responsive timeline widths.
+- Added durable session memory for claims, recent diff excerpts, file activity, work-map warnings, agent aliases, provider/model metadata, specialist, and context usage.
+- Added shell mutation tracking: files changed by `run_command` now appear in live diffs, file activity, and agent commit ownership.
+- Added a non-blocking work map that surfaces overlapping claims and repeated co-edit conflicts in `/board` and agent context.
+
+### 0.4.5 Changed
+
+- Clarified agent naming around `Name: task` syntax in README examples.
+- Made `/raw` visible only when it affects the active focus view.
+- Reset focus scroll follow-tail behavior when switching focused agents.
+- Improved session restore so `/restore` can target saved agents by name, alias, or id when their conversation is available.
+
+### 0.4.5 Fixed
+
+- Fixed attach-terminal `@all` being treated as plain text to the attached agent.
+- Fixed restored note ids drifting by resynchronizing blackboard note and change sequences after loading session data.
+- Fixed shell-created edits being invisible to `/diff`, `/board`, and `/commit`.
+
 ## 0.4.4 - 2026-06-23
 
 ### 0.4.4 Added

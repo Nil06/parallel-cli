@@ -5,6 +5,8 @@ import { t } from '../i18n.js';
 import type { AgentInfo } from '../types.js';
 import { readClipboardImage } from './clipboard.js';
 
+export type InputContext = 'hub' | 'focus' | 'attach';
+
 type Attachment =
   | { kind: 'paste'; n: number; marker: string; text: string; lines: number }
   | { kind: 'image'; n: number; dataUri: string; label: string };
@@ -13,6 +15,10 @@ interface Props {
   active: boolean;
   placeholder: string;
   mask?: boolean;
+  context?: InputContext;
+  targetAgent?: string;
+  modelLabel?: string;
+  commandNames?: string[];
   agentNames?: string[];
   agents?: AgentInfo[];
   onSubmit: (value: string, images?: string[]) => void;
@@ -32,10 +38,20 @@ const GROUP_LABEL: Record<string, string> = {
   other: 'Other',
 };
 
-function modeHint(value: string): string {
+const AGENT_ARG_COMMANDS = new Set(['/focus', '/send', '/attach', '/pause', '/resume', '/stop', '/restore', '/commit']);
+
+function modeHint(value: string, context: InputContext, targetAgent?: string): string {
   const v = value.trimStart().toLowerCase();
-  if (!v) return 'Default /task · Tab/→ autocomplete · / for commands';
-  if (!v.startsWith('/')) return 'Will launch /task';
+  if (!v) {
+    if (context === 'focus') return `Message ${targetAgent ?? 'focused agent'} · / for hub commands · PgUp/PgDn scroll`;
+    if (context === 'attach') return `Steer ${targetAgent ?? 'agent'} · /task spawns · @all broadcasts · /quit detaches`;
+    return 'Default /task · Tab/→ autocomplete · / for commands';
+  }
+  if (!v.startsWith('/')) {
+    if (context === 'focus') return `Will message ${targetAgent ?? 'focused agent'}`;
+    if (context === 'attach') return `Will steer ${targetAgent ?? 'attached agent'}`;
+    return 'Will launch /task';
+  }
   if (v.startsWith('/ask') || v === '/a') return 'Ask mode · advice only · no edits';
   if (v.startsWith('/task') || v === '/t') return 'Task mode · execute, edit, validate';
   if (v.startsWith('/plan') || v === '/p') return 'Plan mode · asks before editing';
@@ -54,7 +70,38 @@ export function bestCommandCompletion(value: string): string | null {
   return cmd ? `${cmd.name} ` : null;
 }
 
-export function CommandInput({ active, placeholder, mask, agentNames = [], agents = [], onSubmit, onEscape, notify }: Props) {
+export function commandNamesForContext(context: InputContext): string[] | undefined {
+  if (context !== 'attach') return undefined;
+  return ['/ask', '/a', '/task', '/t', '/plan', '/p', '/send', '/raw', '/quit', '/exit', '/detach'];
+}
+
+export function agentArgCommand(value: string): string | null {
+  const m = value.match(/^(\/\S+)\s+([^\s]*)$/);
+  if (!m) return null;
+  const cmd = m[1].toLowerCase();
+  return AGENT_ARG_COMMANDS.has(cmd) ? cmd : null;
+}
+
+export function completeAgentArgument(value: string, agent: string): string {
+  const cmd = agentArgCommand(value);
+  if (!cmd) return value;
+  return `${cmd} ${agent} `;
+}
+
+export function CommandInput({
+  active,
+  placeholder,
+  mask,
+  context = 'hub',
+  targetAgent,
+  modelLabel,
+  commandNames,
+  agentNames = [],
+  agents = [],
+  onSubmit,
+  onEscape,
+  notify,
+}: Props) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [history, setHistory] = useState<string[]>([]);
@@ -106,12 +153,30 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
     notify?.(t('input.imageAdded'));
   };
 
-  const cmdSuggestions = value.startsWith('/') && !value.includes(' ') ? matchCommands(value).slice(0, 10) : [];
+  const uniqueAgentNames = [...new Set(agentNames.filter(Boolean))];
+  const allowedCommands = commandNames ?? commandNamesForContext(context);
+  const commandAllowed = (c: CommandDef) =>
+    !allowedCommands || allowedCommands.includes(c.name) || c.aliases?.some((a) => allowedCommands.includes(a));
+  const cmdSuggestions =
+    value.startsWith('/') && !value.includes(' ') ? matchCommands(value).filter(commandAllowed).slice(0, 10) : [];
   const agentSuggestions =
     value.startsWith('@') && !value.includes(' ')
-      ? ['all', ...agentNames].filter((n) => n.toLowerCase().startsWith(value.slice(1).toLowerCase())).slice(0, 8)
+      ? ['all', ...uniqueAgentNames].filter((n) => n.toLowerCase().startsWith(value.slice(1).toLowerCase())).slice(0, 8)
       : [];
-  const suggestionCount = cmdSuggestions.length > 0 ? cmdSuggestions.length : agentSuggestions.length;
+  const argCommand = agentArgCommand(value);
+  const argPrefix = argCommand ? value.split(/\s+/)[1] ?? '' : '';
+  const argSuggestions = argCommand
+    ? [
+        ...(argCommand === '/send' || argCommand === '/pause' || argCommand === '/resume' || argCommand === '/stop' || argCommand === '/commit'
+          ? ['all']
+          : []),
+        ...uniqueAgentNames,
+      ]
+        .filter((n) => n.toLowerCase().startsWith(argPrefix.toLowerCase()))
+        .slice(0, 8)
+    : [];
+  const suggestionCount =
+    cmdSuggestions.length > 0 ? cmdSuggestions.length : agentSuggestions.length > 0 ? agentSuggestions.length : argSuggestions.length;
   const hasSuggestions = suggestionCount > 0;
   const exactCommand = cmdSuggestions.some(
     (c) => c.name === value.toLowerCase() || c.aliases?.some((a) => a === value.toLowerCase()),
@@ -134,6 +199,11 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
     if (agentSuggestions.length > 0) {
       const agent = agentSuggestions[Math.min(selectedSuggestion, agentSuggestions.length - 1)];
       setValue('@' + agent + ' ');
+      return true;
+    }
+    if (argSuggestions.length > 0) {
+      const agent = argSuggestions[Math.min(selectedSuggestion, argSuggestions.length - 1)];
+      setValue(completeAgentArgument(value, agent));
       return true;
     }
     return false;
@@ -236,7 +306,12 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
 
   return (
     <Box flexDirection="column">
-      <Text color="gray" wrap="truncate-end">{modeHint(value)}</Text>
+      <Box flexDirection="row" gap={1}>
+        <Text color="gray" wrap="truncate-end">{modeHint(value, context, targetAgent)}</Text>
+        <Text color="cyan">[{context}]</Text>
+        {targetAgent ? <Text color="magenta">[{targetAgent}]</Text> : null}
+        {modelLabel ? <Text color="yellow">[{modelLabel}]</Text> : null}
+      </Box>
       {cmdSuggestions.length > 0 && (
         <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
           {groupedCommands(cmdSuggestions).map(([group, commands]) => (
@@ -267,6 +342,23 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
             <Text key={n}>
               <Text color={i === selectedSuggestion ? 'cyanBright' : 'cyan'} bold>
                 {i === selectedSuggestion ? '› ' : '  '}@{n.padEnd(10)}
+              </Text>
+              <Text color="gray">
+                {n === 'all'
+                  ? t('input.atAll')
+                  : `${byName.get(n)?.state ?? ''} ${byName.get(n)?.mode ? `/${byName.get(n)?.mode}` : ''}`}
+              </Text>
+            </Text>
+          ))}
+        </Box>
+      )}
+      {argSuggestions.length > 0 && (
+        <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
+          <Text color="gray" bold>Agents</Text>
+          {argSuggestions.map((n, i) => (
+            <Text key={n}>
+              <Text color={i === selectedSuggestion ? 'cyanBright' : 'cyan'} bold>
+                {i === selectedSuggestion ? '› ' : '  '}{n.padEnd(12)}
               </Text>
               <Text color="gray">
                 {n === 'all'

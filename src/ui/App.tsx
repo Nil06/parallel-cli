@@ -30,7 +30,7 @@ import type { AgentInfo } from '../types.js';
 
 const LOGO = 'Parallel';
 // Version from package.json. Hardcoded — rootDir: "src" prevents importing ../../package.json.
-const VERSION = '0.4.4';
+const VERSION = '0.4.5';
 
 type Phase = 'lang' | 'folder' | 'session' | 'provider' | 'model' | 'main';
 type ProviderStep =
@@ -832,7 +832,10 @@ function MainScreen({
     : undefined;
   const [scroll, setScroll] = useState(0);
   const [focusFollowTail, setFocusFollowTail] = useState(true);
-  useEffect(() => setScroll(0), [focus]);
+  useEffect(() => {
+    setScroll(0);
+    setFocusFollowTail(true);
+  }, [focus]);
   const FOCUS_LOGS = Math.max(8, bodyHeight - 1);
   const focusedLogs = focused ? ctl.board.logs.filter((l) => l.agentId === focused.id) : [];
   const maxScroll = Math.max(0, focusedLogs.length - FOCUS_LOGS);
@@ -931,7 +934,7 @@ function MainScreen({
               <Text bold color={BRAND.primary}>PARALLEL</Text>
               <Text color={globalDotColor}> ●</Text>
               <Text color={view === 'agents' ? CHROME.muted : BRAND.muted}> {viewLabel}</Text>
-              {rawLogs ? <Text color={UI.warn}> [RAW]</Text> : null}
+              {rawLogs && focused ? <Text color={UI.warn}> [RAW]</Text> : null}
             </Box>
             <Text color={CHROME.muted}>{middleTruncate(folder, folderMax)}</Text>
           </Box>
@@ -990,7 +993,7 @@ function MainScreen({
           </Box>
         ) : focused ? (
           <Box flexDirection="column">
-            <AgentTranscript agent={focused} logs={visibleLogs} raw={rawLogs} scrolled={clampedScroll} />
+            <AgentTranscript agent={focused} logs={visibleLogs} raw={rawLogs} scrolled={clampedScroll} cols={cols} />
             {!focusFollowTail ? <Text color={UI.warn}>Viewing older · PgDn to latest</Text> : null}
           </Box>
         ) : (
@@ -1045,6 +1048,9 @@ function MainScreen({
       <CommandInput
         active={inputActive}
         placeholder={focus ? `Message ${focus} or /command` : 'Task mode: describe work to run · /ask question · /plan proposal · / for commands'}
+        context={focus ? 'focus' : 'hub'}
+        targetAgent={focused?.name}
+        modelLabel={ctl.sessionProvider() ? `${ctl.sessionProvider()?.name}:${ctl.session.model}` : undefined}
         agentNames={agentNames}
         agents={agents}
         onSubmit={onInput}

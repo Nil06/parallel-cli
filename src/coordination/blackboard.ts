@@ -9,6 +9,7 @@ import type {
   LogEntry,
   LogKind,
   Note,
+  WorkMapWarning,
 } from '../types.js';
 
 /**
@@ -26,6 +27,7 @@ export class Blackboard extends EventEmitter {
   notes: Note[] = [];
   changes: FileChange[] = [];
   logs: LogEntry[] = [];
+  workMapWarnings: WorkMapWarning[] = [];
 
   private noteSeq = 0;
   private changeSeq = 0;
@@ -55,6 +57,7 @@ export class Blackboard extends EventEmitter {
     const a = this.agents.get(id);
     if (!a) return;
     Object.assign(a, patch);
+    if ('claims' in patch) this.recomputeWorkMap();
     this.touch();
   }
 
@@ -81,7 +84,7 @@ export class Blackboard extends EventEmitter {
 
   // ---------- file activity (awareness, never blocking) ----------
 
-  recordActivity(relPath: string, agentId: string, op: 'write' | 'edit'): void {
+  recordActivity(relPath: string, agentId: string, op: 'write' | 'edit' | 'shell'): void {
     const agent = this.agents.get(agentId);
     this.fileActivity.set(relPath, {
       path: relPath,
@@ -162,11 +165,64 @@ export class Blackboard extends EventEmitter {
     const n = (this.conflictCounts.get(relPath) ?? 0) + 1;
     this.conflictCounts.set(relPath, n);
     if (n === 3) this.emit('agent-event', { type: 'conflict', path: relPath });
+    this.upsertWorkWarning({
+      id: `conflict:${relPath}`,
+      level: n >= 3 ? 'conflict' : 'warn',
+      title: 'Repeated edit conflict',
+      detail: `${relPath} has ${n} recorded co-edit collision${n === 1 ? '' : 's'}. Coordinate before touching it again.`,
+      paths: [relPath],
+      agentNames: [],
+      ts: Date.now(),
+      count: n,
+    });
     return n;
   }
 
   lastChangeId(): number {
     return this.changes.length > 0 ? this.changes[this.changes.length - 1].id : 0;
+  }
+
+  private static normClaim(p: string): string {
+    return p.trim().replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/+$/, '');
+  }
+
+  private static overlaps(a: string, b: string): boolean {
+    const x = Blackboard.normClaim(a);
+    const y = Blackboard.normClaim(b);
+    if (!x || !y) return false;
+    return x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`);
+  }
+
+  private upsertWorkWarning(warning: WorkMapWarning): void {
+    const idx = this.workMapWarnings.findIndex((w) => w.id === warning.id);
+    if (idx >= 0) this.workMapWarnings[idx] = warning;
+    else this.workMapWarnings.push(warning);
+    if (this.workMapWarnings.length > 100) this.workMapWarnings.splice(0, this.workMapWarnings.length - 100);
+  }
+
+  recomputeWorkMap(): WorkMapWarning[] {
+    const agents = [...this.agents.values()].filter((a) => a.claims && a.claims.length > 0);
+    const warnings: WorkMapWarning[] = [];
+    for (let i = 0; i < agents.length; i++) {
+      for (let j = i + 1; j < agents.length; j++) {
+        const a = agents[i];
+        const b = agents[j];
+        const paths = (a.claims ?? []).filter((left) => (b.claims ?? []).some((right) => Blackboard.overlaps(left, right)));
+        if (paths.length === 0) continue;
+        warnings.push({
+          id: `overlap:${[a.id, b.id].sort().join(':')}`,
+          level: 'warn',
+          title: 'Overlapping work areas',
+          detail: `${a.name} and ${b.name} both declared ${paths.join(', ')}.`,
+          paths,
+          agentNames: [a.name, b.name],
+          ts: Date.now(),
+        });
+      }
+    }
+    const conflictWarnings = this.workMapWarnings.filter((w) => w.id.startsWith('conflict:')).slice(-20);
+    this.workMapWarnings = [...conflictWarnings, ...warnings].slice(-100);
+    return this.workMapWarnings;
   }
 
   // ---------- logs ----------
@@ -217,6 +273,14 @@ export class Blackboard extends EventEmitter {
       }
     }
 
+    const warnings = this.workMapWarnings.filter((w) => w.level !== 'info').slice(-5);
+    if (warnings.length > 0) {
+      lines.push('Work map warnings (advisory, do not block):');
+      for (const w of warnings) {
+        lines.push(`  • ${w.title}: ${w.detail}`);
+      }
+    }
+
     if (me) lines.push(`Reminder — your task: ${me.task}`);
     lines.push('=== END OF REAL-TIME STATE ===');
     return lines.join('\n');
@@ -242,11 +306,28 @@ export class Blackboard extends EventEmitter {
           })),
           fileActivity: [...this.fileActivity.values()],
           notes: this.notes.slice(-100),
+          changes: this.changes.slice(-50),
+          workMapWarnings: this.workMapWarnings.slice(-50),
         };
         fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(state, null, 2));
       } catch {
         // best effort only
       }
     }, 500);
+  }
+
+  hydrate(data: {
+    notes?: Note[];
+    changes?: FileChange[];
+    fileActivity?: FileActivity[];
+    workMapWarnings?: WorkMapWarning[];
+  }): void {
+    this.notes = [...(data.notes ?? [])].sort((a, b) => a.id - b.id);
+    this.changes = [...(data.changes ?? [])].sort((a, b) => a.id - b.id);
+    this.fileActivity = new Map((data.fileActivity ?? []).map((a) => [a.path, a]));
+    this.workMapWarnings = [...(data.workMapWarnings ?? [])].sort((a, b) => a.ts - b.ts);
+    this.noteSeq = this.notes.reduce((max, n) => Math.max(max, n.id), 0);
+    this.changeSeq = this.changes.reduce((max, c) => Math.max(max, c.id), 0);
+    this.touch();
   }
 }

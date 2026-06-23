@@ -7,6 +7,7 @@ import { Md } from './Md.js';
 import { Spinner } from './Spinner.js';
 import { Timeline } from './Timeline.js';
 import { MARK, MODE, STATE_META, UI, ANIM } from './tokens.js';
+import { latestSignal, toUIEvents } from './events.js';
 
 export const KIND_COLOR: Record<string, string> = {
   tool: UI.accent,
@@ -30,7 +31,18 @@ export function cleanHubSummary(text: string): string {
 }
 
 export function formatAgentTelemetry(agent: AgentInfo): string {
-  return `${elapsed(agent.startedAt)} · ${agent.cost === null ? '$-' : fmtCost(agent.cost)}`;
+  const ctx = agent.ctxPct !== undefined ? ` · ${agent.ctxPct}% ctx` : '';
+  return `${elapsed(agent.startedAt)}${ctx} · ${agent.cost === null ? '$-' : fmtCost(agent.cost)}`;
+}
+
+function compactResultSummary(text: string, max: number): string {
+  const clean = cleanHubSummary(text);
+  const validation = text.match(/validation[^:\n]*[:\n]\s*([^\n]+)/i)?.[1]?.trim();
+  const risk = text.match(/risks?[^:\n]*[:\n]\s*([^\n]+)/i)?.[1]?.trim() ?? text.match(/risques?[^:\n]*[:\n]\s*([^\n]+)/i)?.[1]?.trim();
+  const parts = [clean.slice(0, Math.max(40, Math.floor(max * 0.55)))];
+  if (validation) parts.push(`V: ${validation}`);
+  if (risk) parts.push(`R: ${risk}`);
+  return truncate(parts.join(' · '), max);
 }
 
 function ResultBlock({ agent, compact = false }: { agent: AgentInfo; compact?: boolean }) {
@@ -101,13 +113,15 @@ export function AgentRow({
   const taskMax = Math.max(10, cols - 18);
   const line2Max = Math.max(10, cols - 2);
   const telemetry = formatAgentTelemetry(agent);
+  const signal = latestSignal(agent, toUIEvents(logs));
+  const specialist = agent.specialist ? ` #${agent.specialist}` : '';
 
   // Line 2 content
   let line2: { text: string; color: string } | null = null;
   if (agent.lastResult) {
-    line2 = { text: `✓ ${truncate(cleanHubSummary(agent.lastResult), line2Max)}`, color: UI.ok };
-  } else if (agent.currentAction) {
-    line2 = { text: `▸ ${truncate(agent.currentAction, line2Max)}`, color: UI.accent };
+    line2 = { text: `✓ ${compactResultSummary(agent.lastResult, line2Max)}`, color: UI.ok };
+  } else if (signal) {
+    line2 = { text: `▸ ${truncate(signal, line2Max)}`, color: UI.accent };
   } else {
     line2 = { text: meta.label, color: meta.color };
   }
@@ -126,6 +140,7 @@ export function AgentRow({
         {mode ? (
           <Text color={mode.color}> {mode.char}</Text>
         ) : null}
+        {specialist ? <Text color={UI.note}>{specialist}</Text> : null}
         <Text color={UI.text}>  {truncate(agent.task, taskMax)}</Text>
       </Text>
       {/* Line 2: status + right-aligned telemetry */}
@@ -146,11 +161,13 @@ export function AgentTranscript({
   logs,
   raw = false,
   scrolled = 0,
+  cols = 100,
 }: {
   agent: AgentInfo;
   logs: LogEntry[];
   raw?: boolean;
   scrolled?: number;
+  cols?: number;
 }) {
   const meta = STATE_META[agent.state];
   return (
@@ -188,7 +205,7 @@ export function AgentTranscript({
         <Text color={UI.muted} bold>
           Activity{raw ? ' raw' : ''}
         </Text>
-        <Timeline logs={logs} raw={raw} />
+        <Timeline logs={logs} raw={raw} cols={cols} />
       </Box>
       <Text color={UI.muted} wrap="truncate-end">
         PgUp/PgDn scroll · /raw toggles detail · Esc returns

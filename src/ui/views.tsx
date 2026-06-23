@@ -56,6 +56,7 @@ export function BoardView({ board, bodyHeight }: { board: Blackboard; bodyHeight
   const sideRows = bodyHeight ? Math.max(1, Math.floor((bodyHeight - visibleAgents - 5) / 2)) : 8;
   const activities = [...board.fileActivity.values()].sort((a, b) => b.ts - a.ts).slice(0, sideRows);
   const notes = board.notes.slice(-sideRows);
+  const warnings = board.workMapWarnings.slice(-Math.max(2, Math.min(4, sideRows)));
   return (
     <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={1}>
       <Text bold color="yellow">
@@ -77,13 +78,27 @@ export function BoardView({ board, bodyHeight }: { board: Blackboard; bodyHeight
               {' '}
               {STATE_LABEL[a.state].icon} {stateLabel(a.state)}
             </Text>
-            <Text color="gray"> {truncate(a.currentAction || a.task, 110)}</Text>
+            <Text color="gray"> {truncate(a.currentAction || a.task, 80)}</Text>
+            {a.claims && a.claims.length > 0 ? <Text color="yellow"> · {truncate(a.claims.join(', '), 45)}</Text> : null}
           </Text>
         ))}
         <Below n={below} />
         </>
       )}
       <Text bold>{t('board.activity')}</Text>
+      {warnings.length > 0 ? (
+        <>
+          <Text bold color="yellowBright">{t('board.workMap')}</Text>
+          {warnings.map((w) => (
+            <Text key={w.id} wrap="truncate-end">
+              {'  '}
+              <Text color={w.level === 'conflict' ? 'redBright' : 'yellow'}>{w.level === 'conflict' ? '!' : '⚠'} </Text>
+              <Text color="yellow">{w.title}</Text>
+              <Text color="gray"> — {truncate(w.detail, 120)}</Text>
+            </Text>
+          ))}
+        </>
+      ) : null}
       {activities.length === 0 ? (
         <Text color="gray"> {t('board.noActivity')}</Text>
       ) : (

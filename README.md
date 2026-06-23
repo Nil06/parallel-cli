@@ -16,9 +16,12 @@ Parallel lets you run several AI coding agents on the same repository at the sam
 - Run multiple agents in parallel on one project.
 - Choose explicit modes: `/ask`, `/task`, and `/plan`.
 - Type plain text to launch a task agent immediately.
+- Use context-aware input in the hub, focus view, and attached agent terminals.
 - Steer one agent with `@a1 ...` or broadcast with `@all ...`.
 - Open dedicated agent terminals with native scrollback.
+- See a richer live hub with latest agent signals, mode badges, context usage, and responsive timelines.
 - Review agents, notes, file activity, diffs, cost, skills, specialists, and saved sessions from the TUI.
+- Track shell-created file mutations in the same live diff feed as agent edits.
 - Configure OpenAI-compatible providers through a guided wizard and settings panel.
 - Use 29 provider presets across Western, Chinese, Gateway, Inference, and Local categories.
 - Support local no-key endpoints such as Ollama and vLLM/SGLang.
@@ -79,9 +82,9 @@ Plain text launches a `/task` agent. You can launch another agent while the firs
 Use explicit modes when intent matters:
 
 ```text
-/ask reviewer should we split the CLI parser?
-/plan migration propose the safest rollout for the config change
-/task builder implement the approved plan
+/ask Reviewer: should we split the CLI parser?
+/plan Migration: propose the safest rollout for the config change
+/task Builder: implement the approved plan
 ```
 
 Steer a running agent:
@@ -121,6 +124,19 @@ The main TUI is the Parallel hub. It is designed to answer:
 - what each agent just did
 - what changed in the project
 - what model, provider, shell mode, and cost are active
+
+Input has three explicit contexts:
+
+- Hub: plain text launches a new `/task` agent. Slash suggestions show hub commands and agent arguments autocomplete for `/focus`, `/send`, `/attach`, `/pause`, `/resume`, `/stop`, `/restore`, and `/commit`.
+- Focus: after `/focus a1`, plain text talks to the focused agent instead of spawning a new one. `/raw` affects this view only.
+- Attach: in `parallel attach a1`, plain text steers the attached agent. `/task`, `/ask`, and `/plan` spawn new agents from that terminal, while `@all ...`, `@a2 ...`, and `/send ...` route instructions through the main session.
+
+Use `Name: task` when naming an agent:
+
+```text
+/task Tests: add regression coverage for the auth middleware
+/plan Migration: outline the safest database rollout
+```
 
 Common hub commands:
 
@@ -170,9 +186,12 @@ From an attached terminal:
 
 ```text
 plain text sends a message to this agent
-/task write parser regression tests
-/ask is this result safe to merge?
-/plan prepare a migration plan
+@all pause public interface changes until tests finish
+@a2 re-read the API client before editing it
+/send a2 check the new parser contract
+/task Tests: write parser regression tests
+/ask Reviewer: is this result safe to merge?
+/plan Migration: prepare a migration plan
 /raw
 /quit
 ```
@@ -266,7 +285,14 @@ Environment variables:
 - `/save [name]`: save the current session.
 - `/sessions`: list saved sessions.
 - `/session <n|latest>`: load a saved session snapshot. If active agents are running, use `/session <n|latest> --force` after saving/stopping what you need.
-- `/restore <agent>`: relaunch a restored agent with its conversation history.
+- `/restore <agent>`: relaunch a restored agent by name, alias, or saved id when its conversation history is still available.
+
+Session memory has two layers:
+
+- Live memory: active agents see statuses, notes, claims, work-map warnings, file activity, and recent diffs before every model action.
+- Durable memory: `/save` and autosave persist notes, claims, recent diff excerpts, file activity, work-map warnings, agent aliases, model/provider metadata, context usage, and conversation paths for restore.
+
+Restore is best effort and explicit. `/session` reloads coordination memory into the blackboard; `/restore <agent>` relaunches an agent only when the saved conversation file still exists. Restored agents keep their prior task, mode, model, specialist, and conversation when available.
 
 ### Settings And Exit
 
@@ -335,6 +361,10 @@ When an agent writes a file:
 4. The agent receives the other change as context, re-reads the file, merges both intentions, and retries.
 
 This keeps agents moving without allowing silent overwrites.
+
+Commands run through `run_command` are also snapshotted before and after execution. If a shell command edits, creates, or deletes tracked project files, Parallel records those mutations in `/diff`, `/board`, and `/commit` ownership just like tool-based edits.
+
+The work map is advisory, not a lock. Agents can declare claims with `claim_files`; Parallel detects overlapping claims and repeated conflicts, then shows non-blocking warnings in `/board` and injects them into agent context so agents can coordinate before collisions become expensive.
 
 ## Headless Mode
 

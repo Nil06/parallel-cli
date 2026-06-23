@@ -6,7 +6,7 @@ import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { Blackboard } from '../coordination/blackboard.js';
 import type { AgentMode, Skill } from '../types.js';
 
-const IGNORED = new Set(['node_modules', '.git', '.parallel', 'dist', '__pycache__', '.venv', 'venv']);
+const IGNORED = new Set(['node_modules', '.git', '.parallel', '.cursor', 'dist', '__pycache__', '.venv', 'venv']);
 const MAX_OUTPUT = 12_000;
 const MUTATING_TOOLS = new Set(['write_file', 'edit_file', 'claim_files', 'remember']);
 
@@ -287,6 +287,54 @@ export class ToolExecutor {
 
   private relOf(p: string): string {
     return path.relative(this.projectRoot, this.resolve(p)) || '.';
+  }
+
+  private snapshotProject(): Map<string, string> {
+    const snapshot = new Map<string, string>();
+    const walk = (dir: string, depth: number) => {
+      if (depth > 8) return;
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (IGNORED.has(e.name) || e.name.startsWith('.git')) continue;
+        const full = path.join(dir, e.name);
+        const relPath = path.relative(this.projectRoot, full);
+        if (e.isDirectory()) {
+          walk(full, depth + 1);
+          continue;
+        }
+        if (!e.isFile()) continue;
+        try {
+          const stat = fs.statSync(full);
+          if (stat.size > 750_000) continue;
+          snapshot.set(relPath, fs.readFileSync(full, 'utf8'));
+        } catch {
+          /* binary/unreadable files are ignored for diff tracking */
+        }
+      }
+    };
+    walk(this.projectRoot, 0);
+    return snapshot;
+  }
+
+  private recordShellMutations(before: Map<string, string>): number {
+    const after = this.snapshotProject();
+    const paths = new Set([...before.keys(), ...after.keys()]);
+    let count = 0;
+    for (const relPath of [...paths].sort()) {
+      const oldContent = before.get(relPath);
+      const newContent = after.get(relPath);
+      if (oldContent === newContent) continue;
+      this.board.addChange(this.agentId, relPath, oldContent ?? '', newContent ?? '');
+      this.board.recordActivity(relPath, this.agentId, 'shell');
+      count++;
+    }
+    if (count > 0) this.board.log(this.agentId, 'tool', `✏ shell changed ${count} file${count === 1 ? '' : 's'}`);
+    return count;
   }
 
   async execute(name: string, args: any): Promise<string> {
@@ -609,6 +657,7 @@ export class ToolExecutor {
     }
     this.board.setAgentState(this.agentId, 'working', `$ ${command.slice(0, 60)}`);
     this.board.log(this.agentId, 'tool', `$ ${command}`);
+    const before = this.snapshotProject();
     return new Promise((resolve) => {
       exec(
         command,
@@ -621,8 +670,9 @@ export class ToolExecutor {
           else if (err) out += `\n(exit code: ${(err as any).code ?? 1})`;
           if (out.length > MAX_OUTPUT) out = out.slice(0, MAX_OUTPUT) + '\n... (output truncated)';
           const result = out || '(no output, success)';
+          const changed = this.recordShellMutations(before);
           this.board.log(this.agentId, 'tool_result', result);
-          resolve(result);
+          resolve(changed > 0 ? `${result}\n\nTracked shell mutations: ${changed} file${changed === 1 ? '' : 's'}.` : result);
         },
       );
     });

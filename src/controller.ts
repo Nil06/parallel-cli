@@ -12,6 +12,7 @@ import { t } from './i18n.js';
 import type {
   AgentQuestion,
   ApprovalRequest,
+  FileChange,
   Note,
   ParallelConfig,
   ProviderConfig,
@@ -416,7 +417,10 @@ export class Controller extends EventEmitter {
    * memory intact instead of starting from scratch.
    */
   respawnAgent(name: string): Agent | null | 'no-agent' | 'no-conversation' {
-    const sa = this.loadedSession?.agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+    const ref = name.toLowerCase();
+    const sa = this.loadedSession?.agents.find(
+      (a) => a.name.toLowerCase() === ref || a.alias?.toLowerCase() === ref || a.id?.toLowerCase() === ref,
+    );
     if (!sa) return 'no-agent';
     if (!sa.conversation || !fs.existsSync(sa.conversation)) return 'no-conversation';
     let history: any[];
@@ -430,7 +434,8 @@ export class Controller extends EventEmitter {
       return 'no-conversation';
     }
     if (history.length === 0) return 'no-conversation';
-    return this.spawnAgent(sa.task, sa.name, sa.model, undefined, undefined, history, sa.mode ?? 'task');
+    const modelSpec = sa.model ? (sa.providerName ? `${sa.providerName}:${sa.model}` : sa.model) : undefined;
+    return this.spawnAgent(sa.task, sa.name, modelSpec, undefined, sa.specialist, history, sa.mode ?? 'task');
   }
 
   pauseAgent(name: string): boolean {
@@ -468,7 +473,11 @@ export class Controller extends EventEmitter {
   }
 
   broadcast(content: string): number {
-    this.board.addNote('user', 'all', content);
+    const stamp = content.trim();
+    const recent = [...this.board.notes]
+      .reverse()
+      .find((n) => n.from === 'user' && n.to === 'all' && Date.now() - n.ts < 1500);
+    if (stamp && recent?.content !== stamp) this.board.addNote('user', 'all', stamp);
     let n = 0;
     for (const [id, agent] of this.agents.entries()) {
       const info = this.board.agents.get(id);
@@ -638,12 +647,20 @@ export class Controller extends EventEmitter {
     try {
       const dir = this.sessionsDir();
       fs.mkdirSync(dir, { recursive: true });
+      const providerName = this.sessionProvider()?.name ?? this.session.providerName;
+      const trimChange = (c: FileChange): FileChange => ({
+        ...c,
+        before: c.before.length > 40_000 ? `${c.before.slice(0, 40_000)}\n/* truncated */` : c.before,
+        after: c.after.length > 40_000 ? `${c.after.slice(0, 40_000)}\n/* truncated */` : c.after,
+      });
       const data: SessionData = {
         savedAt: new Date().toISOString(),
         name: this.sessionName,
         projectRoot: this.projectRoot,
         agents: [...this.board.agents.values()].map((a) => ({
+          id: a.id,
           name: a.name,
+          alias: a.alias,
           task: a.task,
           mode: a.mode,
           state: a.state,
@@ -652,10 +669,17 @@ export class Controller extends EventEmitter {
           tokensIn: a.tokensIn,
           tokensOut: a.tokensOut,
           cost: a.cost,
+          providerName,
           model: a.model,
+          specialist: a.specialist,
+          claims: a.claims,
+          ctxPct: a.ctxPct,
           conversation: this.conversationFiles.get(a.id),
         })),
         notes: this.board.notes.slice(-200),
+        changes: this.board.changes.slice(-80).map(trimChange),
+        fileActivity: [...this.board.fileActivity.values()].slice(-100),
+        workMapWarnings: this.board.workMapWarnings.slice(-80),
         changedFiles: [...new Set(this.board.changes.map((c) => c.path))],
       };
       const file = path.join(dir, `session-${this.sessionStamp}.json`);
@@ -689,14 +713,17 @@ export class Controller extends EventEmitter {
     this.loadedSession = data;
     if (data.name) this.sessionName = data.name;
     const tasks = data.agents.map((a) => `${a.name} [${a.state}] : ${a.task}${a.lastResult ? ` → ${a.lastResult}` : ''}`);
+    this.board.hydrate({
+      notes: data.notes ?? [],
+      changes: data.changes ?? [],
+      fileActivity: data.fileActivity ?? [],
+      workMapWarnings: data.workMapWarnings ?? [],
+    });
     this.board.addNote(
       'system',
       'all',
-      `Previous session restored (${data.savedAt}). Past work:\n${tasks.join('\n')}\nFiles changed then: ${data.changedFiles.join(', ') || '(none)'}`,
+      `Previous session restored (${data.savedAt}). Past work:\n${tasks.join('\n')}\nFiles changed then: ${(data.changedFiles ?? []).join(', ') || '(none)'}`,
     );
-    for (const n of data.notes.slice(-50)) {
-      this.board.notes.push({ ...n, id: this.board.notes.length + 1 });
-    }
     this.board.log('', 'system', t('m.sessionRestored', { date: new Date(data.savedAt).toLocaleString() }));
     // Financial history: per-agent cost/steps/tokens of the restored session.
     const withCost = data.agents.filter((a) => a.cost !== undefined || a.tokensIn !== undefined);

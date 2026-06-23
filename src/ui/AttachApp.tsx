@@ -60,6 +60,7 @@ export type AttachCommand =
   | { type: 'detach' }
   | { type: 'raw' }
   | { type: 'spawn'; text: string; mode: AgentMode }
+  | { type: 'send'; target: string; text: string }
   | { type: 'input'; text: string };
 
 export function parseAttachCommand(text: string): AttachCommand | null {
@@ -67,6 +68,10 @@ export function parseAttachCommand(text: string): AttachCommand | null {
   if (!v) return null;
   if (v === '/quit' || v === '/exit' || v === '/detach') return { type: 'detach' };
   if (v === '/raw') return { type: 'raw' };
+  const at = v.match(/^@(\S+)\s+(.+)$/s);
+  if (at) return { type: 'send', target: at[1], text: at[2].trim() };
+  const send = v.match(/^\/send\s+(\S+)\s+(.+)$/s);
+  if (send) return { type: 'send', target: send[1], text: send[2].trim() };
   const m = v.match(/^\/(ask|a|task|t|plan|p)\s+(.+)$/s);
   if (m) {
     const mode: AgentMode = m[1] === 'ask' || m[1] === 'a' ? 'ask' : m[1] === 'plan' || m[1] === 'p' ? 'plan' : 'task';
@@ -167,6 +172,10 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
       wire({ type: 'spawn', text: cmd.text, mode: cmd.mode });
       return;
     }
+    if (cmd.type === 'send') {
+      wire({ type: 'send', target: cmd.target, text: cmd.text });
+      return;
+    }
     wire({ type: 'input', agent: agentRef, text: cmd.text });
   };
 
@@ -239,7 +248,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
               <Text color={UI.muted} bold>
                 {t('timeline.activity')}
               </Text>
-              <Timeline logs={lines.map((l) => l.log)} />
+              <Timeline logs={lines.map((l) => l.log)} cols={process.stdout.columns || 100} />
             </Box>
           ) : null}
         </Box>
@@ -289,7 +298,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
                   <Text color={UI.muted} bold>
                     {t('timeline.activity')}
                   </Text>
-                  <Timeline logs={lines.map((l) => l.log)} />
+                  <Timeline logs={lines.map((l) => l.log)} cols={process.stdout.columns || 100} />
                 </Box>
               ) : null}
               {info.lastResult && (info.state === 'done' || info.state === 'error' || info.state === 'stopped') ? (
@@ -333,6 +342,13 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
       <CommandInput
         active={!gone && !interacting}
         placeholder={t('attach.placeholder', { agent: info?.name ?? agentRef })}
+        context="attach"
+        targetAgent={info?.name ?? agentRef}
+        modelLabel={info?.model}
+        agentNames={[info?.alias, info?.name, ...others.flatMap((o) => [o.alias, o.name])].filter(
+          (n): n is string => Boolean(n),
+        )}
+        agents={info ? [info] : []}
         onSubmit={send}
         onEscape={() => exit()}
       />

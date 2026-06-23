@@ -25,14 +25,15 @@ function itemColor(item: TimelineItem): string {
   return UI.text;
 }
 
-function OutputLines({ item }: { item: TimelineItem }) {
+function OutputLines({ item, cols }: { item: TimelineItem; cols: number }) {
   if (!item.output || item.output.length === 0) return null;
+  const max = Math.max(40, cols - 8);
   return (
     <Box flexDirection="column">
       {item.output.map((line, i) => (
         <Text key={`${item.seq ?? 0}-out-${i}`} color={item.status === 'error' ? UI.danger : UI.muted} wrap="truncate-end">
           <Text color={UI.muted}>{i === 0 ? '└ ' : '  '}</Text>
-          {truncate(line, 180)}
+          {truncate(line, max)}
         </Text>
       ))}
       {item.hiddenLines && item.hiddenLines > 0 ? (
@@ -45,9 +46,10 @@ function OutputLines({ item }: { item: TimelineItem }) {
   );
 }
 
-function TimelineRow({ item }: { item: TimelineItem }) {
+function TimelineRow({ item, cols }: { item: TimelineItem; cols: number }) {
+  const max = Math.max(40, cols - 8);
   if (item.kind === 'section') {
-    return <Text color={UI.muted}>────────────────────────────────────────</Text>;
+    return <Text color={UI.muted}>{'─'.repeat(Math.min(Math.max(20, cols - 4), 80))}</Text>;
   }
   if (item.kind === 'narration') {
     return (
@@ -64,9 +66,9 @@ function TimelineRow({ item }: { item: TimelineItem }) {
         <Text color={item.status === 'error' ? UI.danger : UI.text} wrap="truncate-end">
           <Text color={UI.muted}>• </Text>
           <Text bold>{t('timeline.ran')} </Text>
-          <Text color={UI.accent}>{truncate(item.command ?? '', 160)}</Text>
+          <Text color={UI.accent}>{truncate(item.command ?? '', max)}</Text>
         </Text>
-        <OutputLines item={item} />
+        <OutputLines item={item} cols={cols} />
       </Box>
     );
   }
@@ -89,19 +91,19 @@ function TimelineRow({ item }: { item: TimelineItem }) {
           <Text color={UI.muted}>• </Text>
           {item.label}
         </Text>
-        <OutputLines item={item} />
+        <OutputLines item={item} cols={cols} />
       </Box>
     );
   }
   return (
     <Text color={itemColor(item)} italic={item.kind === 'thought'} wrap="truncate-end">
       <Text color={UI.muted}>• </Text>
-      {truncate(item.detail ? `${item.label} ${item.detail}` : item.label, 180)}
+      {truncate(item.detail ? `${item.label} ${item.detail}` : item.label, max)}
     </Text>
   );
 }
 
-export function Timeline({ logs, raw = false, emptyText }: { logs: LogEntry[]; raw?: boolean; emptyText?: string }) {
+export function Timeline({ logs, raw = false, emptyText, cols = 100 }: { logs: LogEntry[]; raw?: boolean; emptyText?: string; cols?: number }) {
   const items = presentTimeline(logs, { raw, outputLines: raw ? 10 : 6 });
   if (items.length === 0) return <Text color={UI.muted}>{emptyText ?? t('timeline.empty')}</Text>;
   return (
@@ -109,11 +111,11 @@ export function Timeline({ logs, raw = false, emptyText }: { logs: LogEntry[]; r
       {items.map((item, i) =>
         item.kind === 'section' ? (
           <Box key={`${item.seq ?? i}-section`} flexDirection="column" marginTop={1}>
-            <TimelineRow item={item} />
+            <TimelineRow item={item} cols={cols} />
             <Text color={UI.muted}>{sectionLabel(item.category)}</Text>
           </Box>
         ) : (
-          <TimelineRow key={`${item.seq ?? i}-${i}`} item={item} />
+          <TimelineRow key={`${item.seq ?? i}-${i}`} item={item} cols={cols} />
         ),
       )}
     </Box>

@@ -48,7 +48,7 @@ export interface FileActivity {
   path: string;
   agentId: string;
   agentName: string;
-  op: 'write' | 'edit';
+  op: 'write' | 'edit' | 'shell';
   ts: number;
 }
 
@@ -60,6 +60,17 @@ export interface FileChange {
   before: string;
   after: string;
   ts: number;
+}
+
+export interface WorkMapWarning {
+  id: string;
+  level: 'info' | 'warn' | 'conflict';
+  title: string;
+  detail: string;
+  paths: string[];
+  agentNames: string[];
+  ts: number;
+  count?: number;
 }
 
 export type LogKind = 'info' | 'tool' | 'tool_result' | 'llm' | 'error' | 'note' | 'system';
@@ -157,7 +168,9 @@ export interface SessionData {
   name?: string;
   projectRoot: string;
   agents: {
+    id?: string;
     name: string;
+    alias?: string;
     task: string;
     mode?: AgentMode;
     state: string;
@@ -166,11 +179,18 @@ export interface SessionData {
     tokensIn?: number;
     tokensOut?: number;
     cost?: number | null;
+    providerName?: string;
     model?: string;
+    specialist?: string;
+    claims?: string[];
+    ctxPct?: number;
     /** Path to the agent's full conversation (JSONL) — enables /restore. */
     conversation?: string;
   }[];
   notes: Note[];
+  changes?: FileChange[];
+  fileActivity?: FileActivity[];
+  workMapWarnings?: WorkMapWarning[];
   changedFiles: string[];
 }
 
