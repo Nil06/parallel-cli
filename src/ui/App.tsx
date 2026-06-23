@@ -5,7 +5,7 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import { Controller } from '../controller.js';
 import { startSessionServer } from '../server.js';
 import { executeInput, type ViewName, type UIActions, type SystemLevel } from '../commands.js';
-import { PROVIDER_PRESETS, getProvider, rememberFolder, saveConfig } from '../config.js';
+import { PROVIDER_PRESETS, getProvider, providerNeedsApiKey, providerReady, rememberFolder, saveConfig } from '../config.js';
 import { LANGS, setLang, t } from '../i18n.js';
 import type { Lang, ParallelConfig, ProviderConfig, SessionData } from '../types.js';
 import { AgentRow, AgentTranscript } from './AgentPanel.js';
@@ -19,17 +19,20 @@ import { BRAND, CHROME, STATE, STATE_META, UI, middleTruncate } from './tokens.j
 import type { AgentInfo } from '../types.js';
 
 const LOGO = 'Parallel';
-// Version from package.json (v0.3.3). Hardcoded — rootDir: "src" prevents importing ../../package.json.
-const VERSION = '0.3.3';
+// Version from package.json. Hardcoded — rootDir: "src" prevents importing ../../package.json.
+const VERSION = '0.4.3';
 
 type Phase = 'lang' | 'folder' | 'session' | 'provider' | 'model' | 'main';
 type ProviderStep =
   | { id: 'pick' }
-  | { id: 'key'; preset: ProviderConfig }
+  | { id: 'presetModel'; provider: ProviderConfig }
+  | { id: 'endpoint'; provider: ProviderConfig }
+  | { id: 'editEndpoint'; provider: ProviderConfig }
+  | { id: 'key'; provider: ProviderConfig }
   | { id: 'name' }
   | { id: 'url'; name: string }
-  | { id: 'model'; name: string; url: string }
-  | { id: 'newKey'; name: string; url: string; model: string };
+  | { id: 'customModel'; name: string; url: string }
+  | { id: 'newKey'; provider: ProviderConfig };
 
 interface SessionChoice {
   file: string;
@@ -38,7 +41,7 @@ interface SessionChoice {
 
 function usableProvider(config: ParallelConfig): ProviderConfig | undefined {
   const p = getProvider(config);
-  return p && p.apiKey && (p.defaultModel || p.models[0]) ? p : undefined;
+  return p && providerReady(p) && (p.defaultModel || p.models[0]) ? p : undefined;
 }
 
 function normalizeFolder(p: string): string {
@@ -66,6 +69,8 @@ function startupFolder(config: ParallelConfig, initialFolder?: string): string |
 
 export function App({ config, initialFolder }: { config: ParallelConfig; initialFolder?: string }) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const wizardListHeight = Math.max(4, (stdout?.rows ?? 30) - 10);
   const initialUsableProvider = usableProvider(config);
   const directFolder = config.language && initialUsableProvider ? startupFolder(config, initialFolder) : null;
 
@@ -95,6 +100,20 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   const [inputReady, setInputReady] = useState(Boolean(directFolder));
 
   const ctl = ctlRef.current;
+
+  const leaveCurrentProject = () => {
+    const current = ctlRef.current;
+    current?.saveSession();
+    current?.stopAll();
+    setFocus(null);
+    setView('agents');
+    setRawLogs(false);
+    setProviderStep({ id: 'pick' });
+    setModelCustom(false);
+    setWizardError('');
+    setSessions([]);
+    setInputReady(false);
+  };
 
   // Re-render (throttled) on every blackboard/controller update.
   useEffect(() => {
@@ -158,6 +177,22 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
           ...ls.slice(-5),
           { text: t('m.copyDone', { name: latest.name }), level: 'ok' as SystemLevel },
         ]);
+      },
+      openProject: (nextFolder?: string) => {
+        leaveCurrentProject();
+        if (nextFolder) {
+          chooseFolder(nextFolder);
+          return;
+        }
+        ctlRef.current = null;
+        setFolder('');
+        setPhase('folder');
+      },
+      openWizard: () => {
+        leaveCurrentProject();
+        ctlRef.current = null;
+        setFolder('');
+        setPhase('lang');
       },
     }),
     [exit],
@@ -223,16 +258,22 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
     if (phase === 'provider') {
       if (providerStep.id === 'pick') {
         setPhase(sessions.length > 0 ? 'session' : 'folder');
-      } else if (providerStep.id === 'key') {
+      } else if (providerStep.id === 'presetModel') {
         setProviderStep({ id: 'pick' });
+      } else if (providerStep.id === 'endpoint') {
+        setProviderStep({ id: 'presetModel', provider: providerStep.provider });
+      } else if (providerStep.id === 'editEndpoint') {
+        setProviderStep({ id: 'endpoint', provider: providerStep.provider });
+      } else if (providerStep.id === 'key') {
+        setProviderStep({ id: 'endpoint', provider: providerStep.provider });
       } else if (providerStep.id === 'name') {
         setProviderStep({ id: 'pick' });
       } else if (providerStep.id === 'url') {
         setProviderStep({ id: 'name' });
-      } else if (providerStep.id === 'model') {
+      } else if (providerStep.id === 'customModel') {
         setProviderStep({ id: 'url', name: providerStep.name });
       } else if (providerStep.id === 'newKey') {
-        setProviderStep({ id: 'model', name: providerStep.name, url: providerStep.url });
+        setProviderStep({ id: 'customModel', name: providerStep.provider.name, url: providerStep.provider.baseUrl });
       }
     }
   };
@@ -248,6 +289,8 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   const finishProvider = (p: ProviderConfig) => {
     ctlRef.current?.saveProvider(p);
     ctlRef.current?.setDefaultProvider(p.name);
+    ctlRef.current?.setSessionProvider(p.name);
+    if (p.defaultModel || p.models[0]) ctlRef.current?.setSessionModel(`${p.name}:${p.defaultModel || p.models[0]}`);
     setProviderStep({ id: 'pick' });
     enterMain();
   };
@@ -297,7 +340,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
         <Box marginTop={1} flexDirection="column">
           {phase === 'lang' && (
             <WizardStep step={1} total={totalSteps} title={t('wiz.lang.title')}>
-              <SelectList items={LANGS.map((l) => ({ label: l.label, value: l.code }))} onSelect={chooseLang} />
+              <SelectList items={LANGS.map((l) => ({ label: l.label, value: l.code }))} height={wizardListHeight} onSelect={chooseLang} />
             </WizardStep>
           )}
           {phase === 'folder' && (
@@ -310,6 +353,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
                     .filter((f) => f !== process.cwd())
                     .map((f) => ({ label: f, value: f, hint: t('wiz.folder.recent') })),
                 ]}
+                height={wizardListHeight}
                 allowInput
                 inputPlaceholder={t('wiz.folder.input')}
                 onBack={wizardBack}
@@ -332,6 +376,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
                       .slice(0, 60)})`,
                   })),
                 ]}
+                height={wizardListHeight}
                 onBack={wizardBack}
                 onSelect={chooseSession}
               />
@@ -395,18 +440,19 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
                   });
                   return items;
                 })()}
+                height={wizardListHeight}
                 onBack={wizardBack}
                 onSelect={async (v) => {
                   if (v === '__custom__') return setProviderStep({ id: 'name' });
                   // Already-configured provider?
                   const existing = config.providers.find((x) => x.name === v);
                   if (existing) {
-                    if (existing.apiKey) {
+                    if (providerReady(existing)) {
                       ctlRef.current?.setDefaultProvider(v);
                       ctlRef.current?.setSessionProvider(v);
-                      enterMain();
+                      setPhase('model');
                     } else {
-                      setProviderStep({ id: 'key', preset: existing });
+                      setProviderStep({ id: 'presetModel', provider: existing });
                     }
                     return;
                   }
@@ -445,13 +491,76 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
                       ]);
                     }
                     const ollamaProvider: ProviderConfig = { ...preset, apiKey: 'ollama-local', models, defaultModel };
-                    ctlRef.current?.saveProvider(ollamaProvider);
-                    ctlRef.current?.setSessionProvider(ollamaProvider.name);
-                    setPhase('model');
+                    setProviderStep({ id: 'presetModel', provider: ollamaProvider });
                     return;
                   }
-                  setProviderStep({ id: 'key', preset: { ...preset, models: [...preset.models] } });
+                  setProviderStep({ id: 'presetModel', provider: { ...preset, models: [...preset.models] } });
                 }}
+              />
+            </WizardStep>
+          )}
+          {phase === 'provider' && providerStep.id === 'presetModel' && (
+            <WizardStep step={4} total={totalSteps} title={t('wiz.provider.model.title')}>
+              <Text color="gray">{t('wiz.model.provider', { name: providerStep.provider.name, url: providerStep.provider.baseUrl })}</Text>
+              <SelectList
+                items={[
+                  ...providerStep.provider.models.map((m) => ({
+                    label: m,
+                    value: m,
+                    hint: m === providerStep.provider.defaultModel ? t('wiz.model.default') : undefined,
+                  })),
+                ]}
+                height={wizardListHeight}
+                allowInput
+                inputPlaceholder={t('wiz.provider.model.ph')}
+                onBack={wizardBack}
+                onSelect={(v) => {
+                  const provider = { ...providerStep.provider };
+                  provider.defaultModel = v;
+                  if (!provider.models.includes(v)) provider.models.push(v);
+                  setProviderStep({ id: 'endpoint', provider });
+                }}
+                onInput={(m) => {
+                  const model = m.trim();
+                  if (!model) return;
+                  const provider = { ...providerStep.provider, models: [...providerStep.provider.models] };
+                  provider.defaultModel = model;
+                  if (!provider.models.includes(model)) provider.models.push(model);
+                  setProviderStep({ id: 'endpoint', provider });
+                }}
+              />
+            </WizardStep>
+          )}
+          {phase === 'provider' && providerStep.id === 'endpoint' && (
+            <WizardStep step={4} total={totalSteps} title={t('wiz.provider.endpoint.title', { name: providerStep.provider.name })}>
+              <Text color="gray">{providerStep.provider.baseUrl}</Text>
+              <Text color="gray">
+                {t('wiz.provider.endpoint.model', { model: providerStep.provider.defaultModel || providerStep.provider.models[0] || '—' })}
+              </Text>
+              <SelectList
+                items={[
+                  { label: t('wiz.provider.endpoint.use'), value: 'use' },
+                  { label: t('wiz.provider.endpoint.edit'), value: 'edit' },
+                ]}
+                height={wizardListHeight}
+                onBack={wizardBack}
+                onSelect={(v) => {
+                  if (v === 'edit') return setProviderStep({ id: 'editEndpoint', provider: providerStep.provider });
+                  if (providerNeedsApiKey(providerStep.provider)) return setProviderStep({ id: 'key', provider: providerStep.provider });
+                  finishProvider(providerStep.provider);
+                }}
+              />
+            </WizardStep>
+          )}
+          {phase === 'provider' && providerStep.id === 'editEndpoint' && (
+            <WizardStep step={4} total={totalSteps} title={t('wiz.provider.url.title')} footer={t('wiz.footer.type')}>
+              <SelectList
+                items={[]}
+                height={wizardListHeight}
+                allowInput
+                inputPlaceholder={providerStep.provider.baseUrl}
+                onBack={wizardBack}
+                onInput={(url) => setProviderStep({ id: 'endpoint', provider: { ...providerStep.provider, baseUrl: url.trim() } })}
               />
             </WizardStep>
           )}
@@ -459,17 +568,18 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
             <WizardStep
               step={4}
               total={totalSteps}
-              title={t('wiz.provider.key.title', { name: providerStep.preset.name })}
+              title={t('wiz.provider.key.title', { name: providerStep.provider.name })}
               footer={t('wiz.provider.key.footer')}
             >
-              <Text color="gray">{providerStep.preset.baseUrl}</Text>
+              <Text color="gray">{providerStep.provider.baseUrl}</Text>
               <SelectList
                 items={[]}
+                height={wizardListHeight}
                 allowInput
                 mask
                 inputPlaceholder="sk-…"
                 onBack={wizardBack}
-                onInput={(k) => finishProvider({ ...providerStep.preset, apiKey: k.trim() })}
+                onInput={(k) => finishProvider({ ...providerStep.provider, apiKey: k.trim() })}
               />
             </WizardStep>
           )}
@@ -477,6 +587,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
             <WizardStep step={4} total={totalSteps} title={t('wiz.provider.name.title')} footer={t('wiz.footer.type')}>
               <SelectList
                 items={[]}
+                height={wizardListHeight}
                 allowInput
                 inputPlaceholder={t('wiz.provider.name.ph')}
                 onBack={wizardBack}
@@ -488,21 +599,34 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
             <WizardStep step={4} total={totalSteps} title={t('wiz.provider.url.title')} footer={t('wiz.footer.type')}>
               <SelectList
                 items={[]}
+                height={wizardListHeight}
                 allowInput
                 inputPlaceholder={t('wiz.provider.url.ph')}
                 onBack={wizardBack}
-                onInput={(url) => setProviderStep({ id: 'model', name: providerStep.name, url })}
+                onInput={(url) => setProviderStep({ id: 'customModel', name: providerStep.name, url })}
               />
             </WizardStep>
           )}
-          {phase === 'provider' && providerStep.id === 'model' && (
+          {phase === 'provider' && providerStep.id === 'customModel' && (
             <WizardStep step={4} total={totalSteps} title={t('wiz.provider.model.title')} footer={t('wiz.footer.type')}>
               <SelectList
                 items={[]}
+                height={wizardListHeight}
                 allowInput
                 inputPlaceholder={t('wiz.provider.model.ph')}
                 onBack={wizardBack}
-                onInput={(model) => setProviderStep({ id: 'newKey', name: providerStep.name, url: providerStep.url, model })}
+                onInput={(model) =>
+                  setProviderStep({
+                    id: 'newKey',
+                    provider: {
+                      name: providerStep.name,
+                      baseUrl: providerStep.url,
+                      apiKey: '',
+                      models: [model.trim()],
+                      defaultModel: model.trim(),
+                    },
+                  })
+                }
               />
             </WizardStep>
           )}
@@ -510,22 +634,20 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
             <WizardStep
               step={4}
               total={totalSteps}
-              title={t('wiz.provider.key.title', { name: providerStep.name })}
+              title={t('wiz.provider.key.title', { name: providerStep.provider.name })}
               footer={t('wiz.provider.key.footer')}
             >
               <SelectList
                 items={[]}
+                height={wizardListHeight}
                 allowInput
                 mask
                 inputPlaceholder="sk-…"
                 onBack={wizardBack}
                 onInput={(key) =>
                   finishProvider({
-                    name: providerStep.name,
-                    baseUrl: providerStep.url,
+                    ...providerStep.provider,
                     apiKey: key.trim(),
-                    models: [providerStep.model],
-                    defaultModel: providerStep.model,
                   })
                 }
               />
@@ -546,6 +668,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
                   { label: t('wiz.model.custom'), value: '__custom__', hint: t('wiz.model.customHint') },
                   { label: t('wiz.model.addProvider'), value: '__provider__' },
                 ]}
+                height={wizardListHeight}
                 onBack={wizardBack}
                 onSelect={chooseModel}
               />
@@ -555,6 +678,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
             <WizardStep step={5} total={totalSteps} title={t('wiz.model.customTitle')} footer={t('wiz.footer.type')}>
               <SelectList
                 items={[]}
+                height={wizardListHeight}
                 allowInput
                 inputPlaceholder={t('wiz.provider.model.ph')}
                 onBack={wizardBack}
@@ -579,7 +703,8 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   const approval = ctl.approvals[0];
   const question = approval ? undefined : ctl.questions[0]; // approvals take priority
   const settingsOpen = view === 'settings' || view === 'settings-session';
-  const inputActive = inputReady && !approval && !question && !settingsOpen;
+  const viewOwnsKeyboard = view !== 'agents' && !settingsOpen;
+  const inputActive = inputReady && !approval && !question && !settingsOpen && !viewOwnsKeyboard;
 
   return (
     <MainScreen
@@ -646,8 +771,8 @@ function MainScreen({
   const agents = [...ctl.board.agents.values()];
   // Adapt the layout to the REAL terminal size (never resize the user's terminal).
   const { stdout } = useStdout();
-  const cols = stdout?.columns ?? 100;
-  const rows = stdout?.rows ?? 30;
+  const cols = Math.max(20, stdout?.columns ?? 100);
+  const rows = Math.max(12, stdout?.rows ?? 30);
   const settingsOpen = view === 'settings' || view === 'settings-session';
 
   // Height budget: fixed sections → body gets the remainder.
@@ -816,9 +941,9 @@ function MainScreen({
       {/* body */}
       <Box height={bodyHeight} overflow="hidden" flexDirection="column">
         {view === 'settings' ? (
-          <SettingsPanel ctl={ctl} scope="global" onClose={onEscape} />
+          <SettingsPanel ctl={ctl} scope="global" height={bodyHeight} onClose={onEscape} />
         ) : view === 'settings-session' ? (
-          <SettingsPanel ctl={ctl} scope="session" onClose={onEscape} />
+          <SettingsPanel ctl={ctl} scope="session" height={bodyHeight} onClose={onEscape} />
         ) : view === 'board' ? (
           <BoardView board={ctl.board} />
         ) : view === 'notes' ? (
@@ -834,7 +959,7 @@ function MainScreen({
         ) : view === 'specialists' ? (
           <SpecialistsView specialists={ctl.getSpecialists()} />
         ) : view === 'help' ? (
-          <HelpView />
+          <HelpView bodyHeight={bodyHeight} />
         ) : agents.length === 0 ? (
           <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
             <Text color="gray">{t('main.empty')}</Text>

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { matchCommands, type CommandDef } from '../commands.js';
 import { t } from '../i18n.js';
@@ -59,6 +59,7 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [history, setHistory] = useState<string[]>([]);
   const [histIdx, setHistIdx] = useState(-1);
+  const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const attSeq = useRef(0);
 
   const reset = () => {
@@ -79,7 +80,7 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
     const full = expand(v).trim();
     const images = attachments.filter((a): a is Extract<Attachment, { kind: 'image' }> => a.kind === 'image');
     if (!full && images.length === 0) return;
-    setHistory((h) => [...h.slice(-49), v]);
+    if (!full.toLowerCase().startsWith('/key ')) setHistory((h) => [...h.slice(-49), v]);
     setHistIdx(-1);
     reset();
     onSubmit(full, images.length > 0 ? images.map((i) => i.dataUri) : undefined);
@@ -105,19 +106,35 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
     notify?.(t('input.imageAdded'));
   };
 
+  const cmdSuggestions = value.startsWith('/') && !value.includes(' ') ? matchCommands(value).slice(0, 10) : [];
+  const agentSuggestions =
+    value.startsWith('@') && !value.includes(' ')
+      ? ['all', ...agentNames].filter((n) => n.toLowerCase().startsWith(value.slice(1).toLowerCase())).slice(0, 8)
+      : [];
+  const suggestionCount = cmdSuggestions.length > 0 ? cmdSuggestions.length : agentSuggestions.length;
+  const hasSuggestions = suggestionCount > 0;
+  const exactCommand = cmdSuggestions.some(
+    (c) => c.name === value.toLowerCase() || c.aliases?.some((a) => a === value.toLowerCase()),
+  );
+
+  useEffect(() => {
+    setSelectedSuggestion(0);
+  }, [value]);
+
+  useEffect(() => {
+    if (selectedSuggestion >= suggestionCount) setSelectedSuggestion(Math.max(0, suggestionCount - 1));
+  }, [selectedSuggestion, suggestionCount]);
+
   const completeBest = (): boolean => {
-    const cmd = bestCommandCompletion(value);
-    if (cmd) {
-      setValue(cmd);
+    if (cmdSuggestions.length > 0) {
+      const cmd = cmdSuggestions[Math.min(selectedSuggestion, cmdSuggestions.length - 1)];
+      setValue(`${cmd.name} `);
       return true;
     }
-    if (value.startsWith('@')) {
-      const frag = value.slice(1).toLowerCase();
-      const m = ['all', ...agentNames].find((n) => n.toLowerCase().startsWith(frag));
-      if (m) {
-        setValue('@' + m + ' ');
-        return true;
-      }
+    if (agentSuggestions.length > 0) {
+      const agent = agentSuggestions[Math.min(selectedSuggestion, agentSuggestions.length - 1)];
+      setValue('@' + agent + ' ');
+      return true;
     }
     return false;
   };
@@ -130,6 +147,10 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
         return;
       }
       if (key.return) {
+        if (hasSuggestions && !exactCommand) {
+          completeBest();
+          return;
+        }
         submit(value);
         return;
       }
@@ -147,6 +168,10 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
         return;
       }
       if (key.upArrow) {
+        if (hasSuggestions) {
+          setSelectedSuggestion((i) => (i - 1 + suggestionCount) % suggestionCount);
+          return;
+        }
         setHistIdx((i) => {
           const ni = i === -1 ? history.length - 1 : Math.max(0, i - 1);
           if (history[ni] !== undefined) setValue(history[ni]);
@@ -155,6 +180,10 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
         return;
       }
       if (key.downArrow) {
+        if (hasSuggestions) {
+          setSelectedSuggestion((i) => (i + 1) % suggestionCount);
+          return;
+        }
         setHistIdx((i) => {
           if (i === -1) return -1;
           const ni = i + 1;
@@ -201,13 +230,9 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
     { isActive: active },
   );
 
-  const cmdSuggestions = value.startsWith('/') && !value.includes(' ') ? matchCommands(value).slice(0, 10) : [];
-  const agentSuggestions =
-    value.startsWith('@') && !value.includes(' ')
-      ? ['all', ...agentNames].filter((n) => n.toLowerCase().startsWith(value.slice(1).toLowerCase())).slice(0, 8)
-      : [];
   const shown = mask ? '•'.repeat(value.length) : value;
   const byName = new Map(agents.flatMap((a) => [[a.name, a], [a.alias, a]]));
+  const commandIndexes = new Map(cmdSuggestions.map((c, i) => [c.name, i]));
 
   return (
     <Box flexDirection="column">
@@ -218,13 +243,19 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
             <Box key={group} flexDirection="column">
               <Text color="gray" bold>{GROUP_LABEL[group] ?? group}</Text>
               {commands.map((c) => (
+                (() => {
+                  const selected = commandIndexes.get(c.name) === selectedSuggestion;
+                  return (
                 <Text key={c.name}>
-                  <Text color="cyan" bold>
+                  <Text color={selected ? 'cyanBright' : 'cyan'} bold>
+                    {selected ? '› ' : '  '}
                     {c.name.padEnd(14)}
                   </Text>
                   <Text color="yellow">{c.args.padEnd(22)}</Text>
                   <Text color="gray">{t(c.descKey)}</Text>
                 </Text>
+                  );
+                })()
               ))}
             </Box>
           ))}
@@ -232,10 +263,10 @@ export function CommandInput({ active, placeholder, mask, agentNames = [], agent
       )}
       {agentSuggestions.length > 0 && (
         <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
-          {agentSuggestions.map((n) => (
+          {agentSuggestions.map((n, i) => (
             <Text key={n}>
-              <Text color="cyan" bold>
-                @{n.padEnd(10)}
+              <Text color={i === selectedSuggestion ? 'cyanBright' : 'cyan'} bold>
+                {i === selectedSuggestion ? '› ' : '  '}@{n.padEnd(10)}
               </Text>
               <Text color="gray">
                 {n === 'all'

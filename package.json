@@ -17,7 +17,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nizos/parallel.git"
+    "url": "git+https://github.com/Nil06/parallel-cli.git"
+  },
+  "homepage": "https://github.com/Nil06/parallel-cli#readme",
+  "bugs": {
+    "url": "https://github.com/Nil06/parallel-cli/issues"
   },
   "author": "Nil Amara",
   "type": "module",
@@ -28,6 +32,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "publishConfig": {

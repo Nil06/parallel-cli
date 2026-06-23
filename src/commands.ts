@@ -1,5 +1,6 @@
 import { Controller, normalizeShellApprovalMode } from './controller.js';
 import { createSkillTemplate, createSpecialistTemplate } from './skills.js';
+import { providerReady } from './config.js';
 import { t } from './i18n.js';
 import type { AgentMode } from './types.js';
 
@@ -27,6 +28,8 @@ export interface UIActions {
   setFocus?: (agentName: string | null) => void;
   toggleRaw?: () => void;
   copyLatest?: () => void;
+  openProject?: (folder?: string) => void;
+  openWizard?: () => void;
 }
 
 export interface CommandDef {
@@ -79,11 +82,13 @@ export const COMMANDS: CommandDef[] = [
   { name: '/restore', args: '<agent>', descKey: 'cmd.restore', group: 'git' },
   // config
   { name: '/model', args: '[[provider:]model]', descKey: 'cmd.model', group: 'settings' },
-  { name: '/key', args: '<key>', descKey: 'cmd.key', group: 'settings' },
+  { name: '/key', args: '<key>', descKey: 'cmd.key', group: 'settings', hidden: true },
   { name: '/approvals', args: '<ask|auto|auto-safe|yolo>', descKey: 'cmd.approvals', group: 'settings' },
   { name: '/sound', args: '<on|off>', descKey: 'cmd.sound', group: 'settings' },
   { name: '/settings', args: '', descKey: 'cmd.settings', group: 'settings' },
   { name: '/settings-session', args: '', descKey: 'cmd.ssettings', group: 'settings', aliases: ['/ssettings'] },
+  { name: '/project', args: '[folder]', descKey: 'cmd.project', group: 'settings', aliases: ['/folder'] },
+  { name: '/wizard', args: '', descKey: 'cmd.wizard', group: 'settings', aliases: ['/setup'] },
   { name: '/doctor', args: '', descKey: 'cmd.doctor', group: 'settings' },
   // exit
   { name: '/help', args: '', descKey: 'cmd.help', group: 'other' },
@@ -125,7 +130,7 @@ function spawnFrom(
 ): void {
   const p = ctl.sessionProvider();
   if (!p) return ui.system(t('m.missingProvider'), 'error');
-  if (!p.apiKey) return ui.system(t('m.missingKey', { name: p.name }), 'error');
+  if (!providerReady(p)) return ui.system(t('m.missingKey', { name: p.name }), 'error');
   if (!ctl.session.model && !p.defaultModel && !p.models[0]) return ui.system(t('m.missingModel', { name: p.name }), 'error');
   // optional --model=xxx flag
   let model: string | undefined;
@@ -203,7 +208,11 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
             ? '/settings-session'
             : rawCmd.toLowerCase() === '/exit'
               ? '/quit'
-              : rawCmd;
+              : rawCmd.toLowerCase() === '/folder'
+                ? '/project'
+                : rawCmd.toLowerCase() === '/setup'
+                  ? '/wizard'
+                  : rawCmd;
   const arg = rest.join(' ').trim();
 
   switch (cmd.toLowerCase()) {
@@ -337,7 +346,7 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     case '/doctor': {
       const p = ctl.sessionProvider();
       if (!p) return ui.system(t('m.missingProvider'), 'error');
-      if (!p.apiKey) return ui.system(t('m.missingKey', { name: p.name }), 'error');
+      if (!providerReady(p)) return ui.system(t('m.missingKey', { name: p.name }), 'error');
       if (!ctl.session.model && !p.defaultModel && !p.models[0])
         return ui.system(t('m.missingModel', { name: p.name }), 'error');
       ui.system(t('m.doctorOk', { pm: `${p.name}:${ctl.session.model || p.defaultModel || p.models[0]}` }), 'ok');
@@ -481,6 +490,12 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       return;
     case '/settings-session':
       ui.setView('settings-session');
+      return;
+    case '/project':
+      ui.openProject?.(arg || undefined);
+      return;
+    case '/wizard':
+      ui.openWizard?.();
       return;
     // SESSION-only approvals & sound (global defaults editable in /settings).
     case '/approvals': {

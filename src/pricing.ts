@@ -204,18 +204,24 @@ const BUILTIN: Record<string, ModelPrice> = {
  * "claude-sonnet-4-20250514" or "openai/gpt-4o-mini"). null = unknown.
  */
 export function priceFor(provider: ProviderConfig | undefined, model: string): ModelPrice | null {
-  const override = provider?.prices?.[model];
+  const overrideKey = provider?.prices
+    ? Object.keys(provider.prices).find((key) => key.toLowerCase() === model.toLowerCase())
+    : undefined;
+  const override = overrideKey ? provider?.prices?.[overrideKey] : undefined;
   if (override) return override;
   const m = model.toLowerCase();
   // strip an optional "vendor/" prefix (OpenRouter-style ids)
   const bare = m.includes('/') ? m.slice(m.lastIndexOf('/') + 1) : m;
-  if (BUILTIN[bare]) return BUILTIN[bare];
+  const builtins = Object.entries(BUILTIN).map(([key, price]) => [key.toLowerCase(), price] as const);
+  const exact = builtins.find(([key]) => key === bare);
+  if (exact) return exact[1];
   // longest prefix wins so "deepseek-chat" beats nothing else
-  let best: string | null = null;
-  for (const key of Object.keys(BUILTIN)) {
-    if ((bare.startsWith(key) || bare.includes(key)) && (!best || key.length > best.length)) best = key;
+  let best: (typeof builtins)[number] | null = null;
+  for (const entry of builtins) {
+    const [key] = entry;
+    if ((bare.startsWith(key) || bare.includes(key)) && (!best || key.length > best[0].length)) best = entry;
   }
-  if (best) return BUILTIN[best];
+  if (best) return best[1];
   // local endpoints (ollama, llama.cpp, vLLM on localhost) → free
   if (provider && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(provider.baseUrl)) return { input: 0, output: 0 };
   return null;

@@ -20,14 +20,18 @@ function useScrollWindow<T>(items: T[], visible: number, anchor: 'top' | 'bottom
   const s = Math.min(scroll, max);
   const step = Math.max(1, visible - 1);
   useInput((_input, key) => {
-    const towardsAnchor = (v: number) => Math.max(0, Math.min(v, max) - step);
-    const awayFromAnchor = (v: number) => Math.min(Math.min(v, max) + step, max);
+    const towardsAnchor = (v: number, amount = step) => Math.max(0, Math.min(v, max) - amount);
+    const awayFromAnchor = (v: number, amount = step) => Math.min(Math.min(v, max) + amount, max);
     if (anchor === 'top') {
       if (key.pageDown) setScroll(awayFromAnchor);
       if (key.pageUp) setScroll(towardsAnchor);
+      if (key.downArrow) setScroll((v) => awayFromAnchor(v, 1));
+      if (key.upArrow) setScroll((v) => towardsAnchor(v, 1));
     } else {
       if (key.pageUp) setScroll(awayFromAnchor);
       if (key.pageDown) setScroll(towardsAnchor);
+      if (key.upArrow) setScroll((v) => awayFromAnchor(v, 1));
+      if (key.downArrow) setScroll((v) => towardsAnchor(v, 1));
     }
   });
   const start = anchor === 'top' ? s : Math.max(0, items.length - visible - s);
@@ -301,9 +305,10 @@ export function SessionsView({ projectRoot }: { projectRoot: string }) {
   );
 }
 
-export function HelpView() {
-  // Intro (4) + title + blank lines (2) + footer (2) + border/input/status ≈ 16 rows of overhead.
-  const visible = useVisibleRows(16);
+export function HelpView({ bodyHeight }: { bodyHeight?: number }) {
+  // Fixed intro/highlight/footer rows consume about 12 lines inside the already-sized body.
+  const fallbackVisible = useVisibleRows(16);
+  const visible = bodyHeight ? Math.max(3, bodyHeight - 12) : fallbackVisible;
   const commands = visibleCommands();
   const { slice, above, below } = useScrollWindow(commands, visible, 'top');
   const highlights: Array<[string, string[]]> = [
@@ -335,7 +340,7 @@ export function HelpView() {
           <Text color="gray">{names.join('  ')}</Text>
         </Text>
       ))}
-      <Text color="gray" wrap="truncate-end">Keyboard: Tab/→ autocomplete · Esc back/clear · PgUp/PgDn scroll · Ctrl+U clear · Ctrl+V image</Text>
+      <Text color="gray" wrap="truncate-end">Keyboard: ↑/↓ or PgUp/PgDn scroll · Tab/→ autocomplete · Esc back/clear · Ctrl+U clear · Ctrl+V image</Text>
       <Text> </Text>
       <Above n={above} />
       {slice.map((c) => (

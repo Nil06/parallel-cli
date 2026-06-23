@@ -6,7 +6,7 @@ import path from 'node:path';
 import { render } from 'ink';
 import { App } from './ui/App.js';
 import { Controller } from './controller.js';
-import { loadConfig, setConfigHome } from './config.js';
+import { loadConfig, providerReady, setConfigHome } from './config.js';
 import { setLang } from './i18n.js';
 
 const argv = process.argv.slice(2);
@@ -52,6 +52,8 @@ Environment variables:
 Inside the TUI:
   <task> + Enter         Launch agent N+1 — even while the others are working
   @a1 <message>          Real-time instruction to an agent (@all for everyone)
+  /project [folder]      Change project folder or reopen the folder picker
+  /wizard                Relaunch the setup wizard
   /help                  All commands
 `);
   process.exit(0);
@@ -105,7 +107,7 @@ if (headless) {
   // No human in the loop: commands are auto-approved.
   ctl.setSessionApprovalMode('yolo');
   const provider = ctl.sessionProvider();
-  if (!provider || !provider.apiKey) {
+  if (!provider || !providerReady(provider)) {
     console.error('Headless mode needs a configured provider + API key. Run `parallel` interactively once, or set PARALLEL_API_KEY.');
     process.exit(1);
   }

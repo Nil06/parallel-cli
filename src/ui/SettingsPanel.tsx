@@ -5,16 +5,18 @@ import { createSkillTemplate, createSpecialistTemplate } from '../skills.js';
 import { priceFor } from '../pricing.js';
 import { SelectList, type SelectItem } from './Wizard.js';
 import { LANGS, getLang, setLang, t } from '../i18n.js';
-import { PROVIDER_PRESETS } from '../config.js';
+import { providerNeedsApiKey, providerReady, PROVIDER_PRESETS } from '../config.js';
 import type { Lang, ProviderConfig, ShellApprovalMode } from '../types.js';
 
 type Step =
   | { id: 'root' }
   | { id: 'lang' }
   | { id: 'pickProvider'; next: 'model' | 'key' | 'prices' | 'models' }
-  | { id: 'model'; provider: ProviderConfig; custom?: boolean }
+  | { id: 'model'; provider: ProviderConfig; custom?: boolean; setup?: boolean }
+  | { id: 'endpoint'; provider: ProviderConfig; setup?: boolean }
+  | { id: 'editEndpoint'; provider: ProviderConfig; setup?: boolean }
   | { id: 'modelList'; provider: ProviderConfig }
-  | { id: 'key'; provider: ProviderConfig }
+  | { id: 'key'; provider: ProviderConfig; setup?: boolean }
   | { id: 'priceModel'; provider: ProviderConfig }
   | { id: 'priceValue'; provider: ProviderConfig; model: string }
   | { id: 'newSkill' }
@@ -40,9 +42,8 @@ function nextApprovalMode(mode: ShellApprovalMode): ShellApprovalMode {
 
 /** Derive a status badge string for a provider in the submenu list. */
 function providerStatus(p: ProviderConfig, defaultName: string): string {
-  const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(p.baseUrl);
   if (p.name.toLowerCase() === defaultName.toLowerCase()) return t('set.status.default');
-  if (isLocal) return t('set.status.local');
+  if (!providerNeedsApiKey(p)) return t('set.status.local');
   if (p.apiKey) return masked(p.apiKey);
   return t('set.status.noKey');
 }
@@ -54,10 +55,12 @@ function providerStatus(p: ProviderConfig, defaultName: string): string {
 export function SettingsPanel({
   ctl,
   scope,
+  height,
   onClose,
 }: {
   ctl: Controller;
   scope: 'global' | 'session';
+  height?: number;
   onClose: () => void;
 }) {
   const [step, setStep] = useState<Step>({ id: 'root' });
@@ -66,6 +69,7 @@ export function SettingsPanel({
 
   const saved = () => setFlash(t('set.saved'));
   const cfg = ctl.config;
+  const listHeight = height ? Math.max(3, height - 5) : undefined;
 
   // ---- root menu items ----
 
@@ -125,6 +129,12 @@ export function SettingsPanel({
   // ---- shared helpers ----
 
   const pickModel = (provider: ProviderConfig, model: string) => {
+    if (step.id === 'model' && step.setup) {
+      provider.defaultModel = model;
+      if (!provider.models.includes(model)) provider.models.push(model);
+      setStep({ id: 'endpoint', provider, setup: true });
+      return;
+    }
     if (scope === 'global') {
       provider.defaultModel = model;
       if (!provider.models.includes(model)) provider.models.push(model);
@@ -138,9 +148,20 @@ export function SettingsPanel({
     setReturnStep(null);
   };
 
+  const finishProviderSetup = (provider: ProviderConfig) => {
+    ctl.saveProvider(provider);
+    if (scope === 'global') {
+      ctl.setDefaultProvider(provider.name);
+      saved();
+    } else {
+      ctl.setSessionModel(`${provider.name}:${provider.defaultModel || provider.models[0] || ''}`);
+    }
+    setStep(returnStep ?? { id: 'providers', scope });
+    setReturnStep(null);
+  };
+
   const finishNewProvider = (name: string, url: string, model: string, key: string) => {
-    ctl.saveProvider({ name, baseUrl: url, apiKey: key, models: [model], defaultModel: model });
-    saved();
+    finishProviderSetup({ name, baseUrl: url, apiKey: key, models: [model], defaultModel: model });
     setStep(returnStep ?? { id: 'root' });
     setReturnStep(null);
   };
@@ -162,12 +183,13 @@ export function SettingsPanel({
       {flash ? <Text color="green">{flash}</Text> : null}
       <Box flexDirection="column" marginTop={1}>
         {/* ---- root ---- */}
-        {step.id === 'root' && <SelectList items={rootItems} onSelect={chooseRoot} />}
+        {step.id === 'root' && <SelectList items={rootItems} height={listHeight} onSelect={chooseRoot} />}
 
         {/* ---- language ---- */}
         {step.id === 'lang' && (
           <SelectList
             items={LANGS.map((l) => ({ label: l.label, value: l.code }))}
+            height={listHeight}
             onSelect={(code) => {
               setLang(code as Lang);
               ctl.setLanguage(code as Lang);
@@ -186,6 +208,7 @@ export function SettingsPanel({
                 ...cfg.providers.map((p) => ({ label: p.name, value: p.name, hint: `(${p.baseUrl})` })),
                 { label: t('set.back'), value: '__back__' },
               ]}
+              height={listHeight}
               onSelect={(v) => {
                 if (v === '__back__') return setStep({ id: 'root' });
                 const p = cfg.providers.find((x) => x.name === v);
@@ -211,6 +234,7 @@ export function SettingsPanel({
                 })),
                 { label: t('set.back'), value: '__back__' },
               ]}
+              height={listHeight}
               allowInput
               inputPlaceholder={t('wiz.provider.model.ph')}
               onSelect={(v) => {
@@ -222,6 +246,56 @@ export function SettingsPanel({
                 pickModel(step.provider, v);
               }}
               onInput={(m) => pickModel(step.provider, m)}
+            />
+          </>
+        )}
+
+        {/* ---- endpoint (review preset/custom endpoint before saving) ---- */}
+        {step.id === 'endpoint' && (
+          <>
+            <Text color="gray">{t('wiz.provider.endpoint.title', { name: step.provider.name })}</Text>
+            <Text color="gray">{step.provider.baseUrl}</Text>
+            <Text color="gray">{t('wiz.provider.endpoint.model', { model: step.provider.defaultModel || step.provider.models[0] || '—' })}</Text>
+            <SelectList
+              items={[
+                { label: t('wiz.provider.endpoint.use'), value: 'use' },
+                { label: t('wiz.provider.endpoint.edit'), value: 'edit' },
+                { label: t('set.back'), value: '__back__' },
+              ]}
+              height={listHeight}
+              onSelect={(v) => {
+                if (v === '__back__') {
+                  setStep({ id: 'model', provider: step.provider, setup: step.setup });
+                  return;
+                }
+                if (v === 'edit') return setStep({ id: 'editEndpoint', provider: step.provider, setup: step.setup });
+                if (step.setup) {
+                  if (providerNeedsApiKey(step.provider)) return setStep({ id: 'key', provider: step.provider, setup: true });
+                  finishProviderSetup(step.provider);
+                  return;
+                }
+                ctl.saveProvider(step.provider);
+                saved();
+                setStep(returnStep ?? { id: 'providerDetail', provider: step.provider, scope });
+                setReturnStep(null);
+              }}
+            />
+          </>
+        )}
+
+        {/* ---- edit endpoint ---- */}
+        {step.id === 'editEndpoint' && (
+          <>
+            <Text color="gray">{t('wiz.provider.url.title')}</Text>
+            <SelectList
+              items={[]}
+              height={listHeight}
+              allowInput
+              inputPlaceholder={step.provider.baseUrl}
+              onInput={(url) => {
+                const provider = { ...step.provider, baseUrl: url.trim() };
+                setStep({ id: 'endpoint', provider, setup: step.setup });
+              }}
             />
           </>
         )}
@@ -239,6 +313,7 @@ export function SettingsPanel({
                 })),
                 { label: t('set.back'), value: '__back__' },
               ]}
+              height={listHeight}
               allowInput
               inputPlaceholder={t('set.addModelName')}
               onSelect={(v) => {
@@ -287,6 +362,7 @@ export function SettingsPanel({
                 }),
                 { label: t('set.back'), value: '__back__' },
               ]}
+              height={listHeight}
               allowInput
               inputPlaceholder={t('wiz.provider.model.ph')}
               onSelect={(v) => {
@@ -308,6 +384,7 @@ export function SettingsPanel({
             <Text color="gray">{t('set.priceValue', { model: step.model })}</Text>
             <SelectList
               items={[]}
+              height={listHeight}
               allowInput
               inputPlaceholder="0.27, 1.10"
               onInput={(v) => {
@@ -332,13 +409,17 @@ export function SettingsPanel({
             <Text color="gray">{t('wiz.provider.key.title', { name: step.provider.name })}</Text>
             <SelectList
               items={[]}
+              height={listHeight}
               allowInput
               mask
               inputPlaceholder="sk-…"
               onInput={(k) => {
-                step.provider.apiKey = k.trim();
-                ctl.saveProvider(step.provider);
-                saved();
+                const provider = { ...step.provider, apiKey: k.trim() };
+                if (step.setup) finishProviderSetup(provider);
+                else {
+                  ctl.saveProvider(provider);
+                  saved();
+                }
                 setStep(returnStep ?? { id: 'root' });
                 setReturnStep(null);
               }}
@@ -352,6 +433,7 @@ export function SettingsPanel({
             <Text color="gray">{t('wiz.provider.name.title')}</Text>
             <SelectList
               items={[]}
+              height={listHeight}
               allowInput
               inputPlaceholder={t('wiz.provider.name.ph')}
               onInput={(name) => setStep({ id: 'newUrl', name })}
@@ -363,6 +445,7 @@ export function SettingsPanel({
             <Text color="gray">{t('wiz.provider.url.title')}</Text>
             <SelectList
               items={[]}
+              height={listHeight}
               allowInput
               inputPlaceholder={t('wiz.provider.url.ph')}
               onInput={(url) => setStep({ id: 'newModel', name: step.name, url })}
@@ -374,6 +457,7 @@ export function SettingsPanel({
             <Text color="gray">{t('wiz.provider.model.title')}</Text>
             <SelectList
               items={[]}
+              height={listHeight}
               allowInput
               inputPlaceholder={t('wiz.provider.model.ph')}
               onInput={(model) => setStep({ id: 'newKey', name: step.name, url: step.url, model })}
@@ -385,6 +469,7 @@ export function SettingsPanel({
             <Text color="gray">{t('wiz.provider.key.title', { name: step.name })}</Text>
             <SelectList
               items={[]}
+              height={listHeight}
               allowInput
               mask
               inputPlaceholder="sk-…"
@@ -399,6 +484,7 @@ export function SettingsPanel({
             <Text color="gray">{t('set.newSkillName')}</Text>
             <SelectList
               items={[]}
+              height={listHeight}
               allowInput
               inputPlaceholder="review, deploy, tests…"
               onInput={(name) => {
@@ -418,6 +504,7 @@ export function SettingsPanel({
             <Text color="gray">{t('set.newSpecialistName')}</Text>
             <SelectList
               items={[]}
+              height={listHeight}
               allowInput
               inputPlaceholder="reviewer, architect, tester…"
               onInput={(name) => {
@@ -496,6 +583,7 @@ export function SettingsPanel({
 
                 return items;
               })()}
+              height={listHeight}
               onSelect={(v) => {
                 if (v === '__back__') return setStep({ id: 'root' });
                 if (v === '__add__') {
@@ -510,14 +598,13 @@ export function SettingsPanel({
                   if (!preset) return;
 
                   if (presetName.toLowerCase() === 'ollama') {
-                    ctl.saveProvider({ ...preset, apiKey: 'ollama-local' });
-                    saved();
-                    return;
+                    setReturnStep({ id: 'providers', scope: step.scope });
+                    return setStep({ id: 'model', provider: { ...preset, apiKey: 'ollama-local' }, setup: true });
                   }
 
-                  // Cloud preset: ask for API key, then save and return to providers
+                  // Preset setup: choose model, review endpoint, then ask for API key if needed.
                   setReturnStep({ id: 'providers', scope: step.scope });
-                  return setStep({ id: 'key', provider: { ...preset } });
+                  return setStep({ id: 'model', provider: { ...preset, models: [...preset.models] }, setup: true });
                 }
 
                 // Existing configured provider
@@ -545,6 +632,19 @@ export function SettingsPanel({
                   value: 'key',
                   hint: masked(step.provider.apiKey),
                 },
+                ...(step.provider.apiKey
+                  ? [
+                      {
+                        label: t('set.providerDetail.clearKey'),
+                        value: 'clearKey',
+                      },
+                    ]
+                  : []),
+                {
+                  label: t('set.providerDetail.endpoint'),
+                  value: 'endpoint',
+                  hint: `(${step.provider.baseUrl})`,
+                },
                 {
                   label: t('set.providerDetail.models'),
                   value: 'models',
@@ -562,11 +662,21 @@ export function SettingsPanel({
                 { label: t('set.providerDetail.remove'), value: 'remove' },
                 { label: t('set.providerDetail.back'), value: '__back__' },
               ]}
+              height={listHeight}
               onSelect={(v) => {
                 if (v === '__back__') return setStep({ id: 'providers', scope: step.scope });
                 if (v === 'key') {
                   setReturnStep({ id: 'providerDetail', provider: step.provider, scope: step.scope });
                   return setStep({ id: 'key', provider: step.provider });
+                }
+                if (v === 'clearKey') {
+                  ctl.saveProvider({ ...step.provider, apiKey: '' });
+                  saved();
+                  return setStep({ id: 'providerDetail', provider: { ...step.provider, apiKey: '' }, scope: step.scope });
+                }
+                if (v === 'endpoint') {
+                  setReturnStep({ id: 'providerDetail', provider: step.provider, scope: step.scope });
+                  return setStep({ id: 'endpoint', provider: step.provider });
                 }
                 if (v === 'models') {
                   setReturnStep({ id: 'providerDetail', provider: step.provider, scope: step.scope });
@@ -598,6 +708,7 @@ export function SettingsPanel({
                 { label: t('set.removeProvider.yes'), value: 'yes' },
                 { label: t('set.removeProvider.no'), value: 'no' },
               ]}
+              height={listHeight}
               onSelect={(v) => {
                 if (v === 'no') return setStep({ id: 'providerDetail', provider: step.provider, scope: step.scope });
                 if (v === 'yes') {

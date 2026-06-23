@@ -254,6 +254,7 @@ export const PROVIDER_PRESETS: ProviderConfig[] = [
     models: ['qwen3-coder:480b', 'glm-4.7', 'deepseek-v3', 'kimi-k2', 'llama3.2', 'mistral', 'codellama', 'gemma3'],
     defaultModel: 'qwen3-coder:480b',
     category: 'local',
+    requiresApiKey: false,
   },
   {
     name: 'vLLM / SGLang',
@@ -262,6 +263,7 @@ export const PROVIDER_PRESETS: ProviderConfig[] = [
     models: ['your-model-here'],
     defaultModel: '',
     category: 'local',
+    requiresApiKey: false,
   },
 ];
 
@@ -278,6 +280,18 @@ function normalizeApprovalMode(mode: unknown): ParallelConfig['approvalMode'] {
   if (mode === 'ask' || mode === 'auto-safe' || mode === 'yolo') return mode;
   if (mode === 'auto') return 'auto-safe';
   return 'ask';
+}
+
+export function isLocalProvider(p: Pick<ProviderConfig, 'baseUrl'>): boolean {
+  return /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(p.baseUrl);
+}
+
+export function providerNeedsApiKey(p: ProviderConfig): boolean {
+  return p.requiresApiKey !== false && !isLocalProvider(p);
+}
+
+export function providerReady(p: ProviderConfig): boolean {
+  return !providerNeedsApiKey(p) || p.apiKey.trim().length > 0;
 }
 
 export function getProvider(cfg: ParallelConfig, name?: string): ProviderConfig | undefined {
@@ -308,6 +322,17 @@ function migrate(raw: Record<string, unknown>, cfg: ParallelConfig): void {
   cfg.defaultProvider = p.name;
 }
 
+function normalizeConfig(cfg: ParallelConfig): void {
+  cfg.providers = cfg.providers.filter((p) => p && typeof p.name === 'string' && typeof p.baseUrl === 'string');
+  for (const p of cfg.providers) {
+    if (!Array.isArray(p.models)) p.models = [];
+    if (typeof p.defaultModel !== 'string') p.defaultModel = p.models[0] ?? '';
+    if (typeof p.apiKey !== 'string') p.apiKey = '';
+  }
+  const defaultExists = cfg.providers.some((p) => p.name.toLowerCase() === cfg.defaultProvider.toLowerCase());
+  if (!defaultExists) cfg.defaultProvider = cfg.providers[0]?.name ?? '';
+}
+
 export function loadConfig(): ParallelConfig {
   let cfg: ParallelConfig = { ...DEFAULTS, providers: [] };
   try {
@@ -322,15 +347,26 @@ export function loadConfig(): ParallelConfig {
   } catch {
     // ignore corrupted config
   }
-  // Env vars: ensure a DeepSeek provider exists / override the default provider.
-  const envKey = process.env.PARALLEL_API_KEY || process.env.DEEPSEEK_API_KEY;
-  if (envKey && cfg.providers.length === 0) {
-    cfg.providers = [{ ...DEEPSEEK_PROVIDER, apiKey: envKey }];
+  normalizeConfig(cfg);
+  // Env vars: PARALLEL_API_KEY targets the current default provider; DEEPSEEK_API_KEY only targets DeepSeek.
+  const parallelKey = process.env.PARALLEL_API_KEY;
+  const deepseekKey = process.env.DEEPSEEK_API_KEY;
+  if (parallelKey && cfg.providers.length === 0) {
+    cfg.providers = [{ ...DEEPSEEK_PROVIDER, apiKey: parallelKey }];
     cfg.defaultProvider = DEEPSEEK_PROVIDER.name;
-  } else if (envKey) {
+  } else if (parallelKey) {
     const p = getProvider(cfg);
-    if (p) p.apiKey = envKey;
+    if (p) p.apiKey = parallelKey;
   }
+  if (deepseekKey) {
+    const p = getProvider(cfg, DEEPSEEK_PROVIDER.name);
+    if (p) p.apiKey = deepseekKey;
+    else {
+      cfg.providers.push({ ...DEEPSEEK_PROVIDER, apiKey: deepseekKey });
+      if (!cfg.defaultProvider) cfg.defaultProvider = DEEPSEEK_PROVIDER.name;
+    }
+  }
+  normalizeConfig(cfg);
   const p = getProvider(cfg);
   if (p) {
     if (process.env.PARALLEL_BASE_URL) p.baseUrl = process.env.PARALLEL_BASE_URL;

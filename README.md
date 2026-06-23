@@ -2,41 +2,29 @@
 
 Real-time multi-agent coding from one terminal control room.
 
-Parallel lets you run several AI coding agents on the same repository at the same time. Each agent has its own task, mode, terminal, live activity timeline, and shared view of the session. The hub keeps you in control: what is running, what needs input, what changed, what it cost, and where to steer next.
+Parallel lets you run several AI coding agents on the same repository at the same time. Each agent has its own task, mode, live activity timeline, model, and shared session context. The TUI stays keyboard-first so you can launch work, inspect progress, answer approvals, steer agents, and review changes without leaving the terminal.
 
-> One hub. Many agents. Shared context. No silent overwrites.
+> One hub. Many agents. Shared context. Human in control.
 
 [![npm version](https://img.shields.io/npm/v/@parallel-cli/parallel?color=blue)](https://www.npmjs.com/package/@parallel-cli/parallel)
 ![node version](https://img.shields.io/node/v/@parallel-cli/parallel)
 ![license](https://img.shields.io/npm/l/@parallel-cli/parallel)
 ![platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)
 
-## What Parallel Is
+## Highlights
 
-Parallel is built for active coding sessions where one agent is not enough:
-
-- ask one agent to audit while another implements
-- run a plan-first agent before allowing edits
-- keep a test-focused agent watching regressions
-- steer any agent live without stopping the others
-- open a dedicated terminal for deep scrollback on one agent
-
-The philosophy is simple: agents can move in parallel, but the human keeps the control room.
-
-## Features
-
-- Launch agents in three explicit modes: `/ask`, `/task`, and `/plan`.
+- Run multiple agents in parallel on one project.
+- Choose explicit modes: `/ask`, `/task`, and `/plan`.
 - Type plain text to launch a task agent immediately.
-- Run multiple agents at once on the same repository.
-- Open a dedicated terminal per agent with native scrollback and live steering.
-- See structured activity timelines instead of raw tool spam.
-- Share live context between agents: status, notes, claims, file activity, and diffs.
-- Avoid silent overwrites with adaptive merge-on-write for file edits.
-- Pause, resume, stop, focus, restore, and steer agents while they are running.
-- Review live diffs, notes, costs, sessions, skills, and specialists from built-in views.
-- Use any OpenAI-compatible provider — 29 pre-configured providers across 5 categories (Western, Chinese, Gateways, Inference, and Local), with verified endpoints and curated model lists for each, plus any custom OpenAI-compatible endpoint.
-- Choose shell approval behavior: `ask`, `auto-safe`, or `yolo`.
-- Track token usage and estimated cost per agent and per session.
+- Steer one agent with `@a1 ...` or broadcast with `@all ...`.
+- Open dedicated agent terminals with native scrollback.
+- Review agents, notes, file activity, diffs, cost, skills, specialists, and saved sessions from the TUI.
+- Configure OpenAI-compatible providers through a guided wizard and settings panel.
+- Use 29 provider presets across Western, Chinese, Gateway, Inference, and Local categories.
+- Support local no-key endpoints such as Ollama and vLLM/SGLang.
+- Keep shell execution controlled with `ask`, `auto-safe`, or `yolo` approvals.
+- Save and restore project sessions.
+- Run headless multi-agent jobs for CI or scripts.
 
 ## Install
 
@@ -44,7 +32,7 @@ Requirements:
 
 - Node.js 18 or newer
 - Linux or macOS
-- An API key for an OpenAI-compatible provider
+- An API key for a cloud provider, or a local OpenAI-compatible endpoint
 
 Install from npm:
 
@@ -52,7 +40,7 @@ Install from npm:
 npm install -g @parallel-cli/parallel
 ```
 
-Run it inside a project:
+Run inside a project:
 
 ```bash
 parallel
@@ -66,7 +54,15 @@ prl
 
 ## Quick Start
 
-On first launch, Parallel opens a setup wizard for language, folder, session, provider, and model.
+On first launch, Parallel opens a setup wizard:
+
+1. Choose language.
+2. Choose the project folder.
+3. Restore a saved session or start a new one.
+4. Choose a provider.
+5. Choose the model.
+6. Review or edit the endpoint.
+7. Enter the provider API key if required.
 
 After setup, type a task and press Enter:
 
@@ -74,7 +70,7 @@ After setup, type a task and press Enter:
 > refactor the API client and update the tests
 ```
 
-Plain text launches a `/task` agent. Start another agent at any time, even while the first one is still working:
+Plain text launches a `/task` agent. You can launch another agent while the first is still working:
 
 ```text
 > add regression coverage for auth middleware
@@ -88,7 +84,7 @@ Use explicit modes when intent matters:
 /task builder implement the approved plan
 ```
 
-Send a live instruction to one agent:
+Steer a running agent:
 
 ```text
 @a1 also handle empty response bodies
@@ -106,7 +102,7 @@ Broadcast to every agent:
 | --- | --- | --- |
 | `/ask` | Questions, reviews, audits, tradeoffs | Answers and advises without editing files. |
 | `/task` | Implementation work | Executes, edits, validates, and summarizes. |
-| `/plan` | Risky or unclear work | Inspects first, asks for approval, then edits only after approval. |
+| `/plan` | Risky or unclear work | Inspects first, presents a plan, then edits only after approval. |
 
 Aliases:
 
@@ -118,28 +114,40 @@ Plain text is equivalent to `/task`.
 
 ## Control Room
 
-The main TUI is the Parallel hub. It is designed to answer four questions quickly:
+The main TUI is the Parallel hub. It is designed to answer:
 
-- What needs my input?
-- Which agents are working?
-- What did each agent just do?
-- What model, folder, shell mode, and cost am I currently running?
+- what needs your input
+- which agents are working
+- what each agent just did
+- what changed in the project
+- what model, provider, shell mode, and cost are active
 
-Useful hub commands:
+Common hub commands:
 
 ```text
 /agents              agent overview
 /focus a1            inspect and steer one agent
 /raw                 toggle raw detail in focus view
-/board               shared blackboard, claims, file activity
+/board               shared blackboard, claims, notes, file activity
 /diff                live diff history
 /cost                token and cost breakdown
 /sessions            saved sessions
 /settings            global settings
 /settings-session    session-only settings
+/project [folder]    change project folder
+/wizard              rerun setup wizard
 ```
 
-Best terminal size is around `120x34`. Parallel still adapts to smaller terminals, but the hub is most readable with enough width for model, folder, status, and agent summaries.
+Keyboard behavior:
+
+- `/` opens slash command suggestions.
+- Up/Down selects suggestions when a suggestion menu is open.
+- Enter accepts the selected suggestion.
+- Tab or Right accepts the best completion.
+- Up/Down scrolls long views such as `/help`.
+- Escape returns to the agents view or clears the input.
+
+Best terminal size is around `120x34`. Parallel adapts to smaller terminals, but the hub is most readable with enough width for model, folder, status, and agent summaries.
 
 ## Dedicated Agent Terminals
 
@@ -153,7 +161,7 @@ Attached terminals show:
 
 - the selected agent's live timeline
 - native terminal scrollback
-- model, elapsed time, steps, tokens, context percentage, and cost
+- model, elapsed time, context, and cost
 - other agents' current state
 - approval and question prompts for that agent
 - an input that steers that agent directly
@@ -176,40 +184,47 @@ Toggle automatic agent terminals from the hub:
 /attach off
 ```
 
-## Shell Approvals
+## Providers And Models
 
-Parallel separates agent modes from shell approval behavior.
+Parallel works with OpenAI-compatible chat completions and tool calling. It ships with 29 presets:
+
+- Western: OpenAI, Anthropic, Google Gemini, xAI Grok, Mistral, Cohere, Perplexity
+- Chinese: DeepSeek, MiniMax, Z.ai / GLM, Alibaba / Qwen, Moonshot / Kimi, Xiaomi / MiMo, StepFun
+- Gateways: OpenRouter, SiliconFlow, Atlas Cloud, Requesty, Vercel AI Gateway
+- Inference: Groq, Cerebras, Together AI, Fireworks, DeepInfra, Novita, Hyperbolic, SambaNova
+- Local: Ollama, vLLM / SGLang
+
+Provider setup is guided in both the first-run wizard and `/settings`:
+
+1. Pick a provider preset or custom provider.
+2. Pick the model.
+3. Review or edit the endpoint.
+4. Enter the provider API key if the provider requires one.
+5. Save globally or use the provider/model for the current session.
+
+Local providers such as Ollama and vLLM/SGLang do not require an API key. You can still review and edit their endpoints.
+
+Useful settings commands:
 
 ```text
-/approvals ask
-/approvals auto-safe
-/approvals yolo
+/settings            global language, providers, keys, defaults, approvals
+/settings-session    temporary model, provider, approvals, sound
+/model               show current session model
+/model provider:id   switch model for this session
+/doctor              check provider/model/API key readiness
 ```
 
-| Mode | Behavior |
+Configuration is stored in `~/.parallel/config.json`.
+
+Environment variables:
+
+| Variable | Purpose |
 | --- | --- |
-| `ask` | Ask before shell commands unless explicitly allowed. |
-| `auto-safe` | Auto-approve safe inspection/build/test commands; ask for risky commands. |
-| `yolo` | Auto-approve every shell command. Intended for trusted/headless usage only. |
-
-`auto` is accepted as a compatibility spelling for `auto-safe`.
-
-## Headless Mode
-
-For CI and scripts, run without the TUI:
-
-```bash
-parallel --headless "fix lint failures" "update tests" --json
-```
-
-Headless mode:
-
-- runs one agent per task
-- uses the current folder as the project root
-- uses `yolo` shell approvals
-- auto-answers agent questions with the recommended option
-- saves the session
-- exits non-zero if any agent does not finish successfully
+| `PARALLEL_API_KEY` | API key for the current default provider. |
+| `DEEPSEEK_API_KEY` | API key for the DeepSeek provider only. |
+| `PARALLEL_BASE_URL` | Override the default provider base URL. |
+| `PARALLEL_MODEL` | Override the session model. |
+| `PARALLEL_NO_ALT_SCREEN=1` | Disable the alternate terminal screen. |
 
 ## Commands
 
@@ -238,8 +253,8 @@ Headless mode:
 | `/resume <agent\|all>` | Resume paused agents. |
 | `/stop <agent\|all>` | Stop running agents. |
 | `/clear` | Remove finished agents from the current display. |
-| `/raw` | | Toggle conversation-raw view. |
-| `/copy` | | Copy latest completed result to clipboard. |
+| `/raw` | Toggle conversation-raw view. |
+| `/copy` | Copy the latest completed result to clipboard. |
 
 ### Git Safety
 
@@ -258,7 +273,7 @@ Headless mode:
 | `/notes` | Full notes history. |
 | `/diff` | Live diff history. |
 | `/cost` | Token and cost breakdown. |
-| `/status` | | Session model, approval mode, agents, cost snapshot. |
+| `/status` | Session model, approval mode, agents, cost snapshot. |
 | `/skills` | Available skills. |
 | `/specialists` | Available specialists. |
 | `/save [name]` | Save the current session. |
@@ -266,117 +281,64 @@ Headless mode:
 | `/session <n\|latest>` | Restore a saved session. |
 | `/restore <agent>` | Relaunch a restored agent with its conversation history. |
 
-### Settings
+### Settings And Exit
 
 | Command | Description |
 | --- | --- |
 | `/model [[provider:]model]` | Show or switch the session model. |
-| `/key <api-key>` | Store the API key for the active provider. |
 | `/approvals <ask\|auto\|auto-safe\|yolo>` | Set shell approvals for this session. |
 | `/sound <on\|off>` | Toggle terminal bell notifications. |
 | `/settings` | Edit global language, providers, keys, defaults, and approvals. |
 | `/settings-session` | Edit session-only model, approvals, and sound. |
+| `/project [folder]` | Change project folder or reopen the folder picker. |
+| `/folder [folder]` | Alias for `/project`. |
+| `/wizard` | Relaunch the setup wizard. |
+| `/setup` | Alias for `/wizard`. |
 | `/doctor` | Check provider, key, and model configuration. |
 | `/help` | Full command reference. |
 | `/quit` | Save the session and exit. |
 
 When there is exactly one agent, commands such as `/undo`, `/focus`, `/pause`, `/resume`, `/stop`, and `/commit` can omit the agent name.
 
-### Providers
+## Shell Approvals
 
-Parallel is provider-agnostic. It ships with **29 pre-configured providers** organized in 5 categories — all with verified endpoints and curated model lists:
+Parallel separates agent modes from shell approval behavior.
 
-#### 🇺🇸 Western
+```text
+/approvals ask
+/approvals auto-safe
+/approvals yolo
+```
 
-| Provider | Endpoint | Default Model | Models |
-|----------|----------|---------------|--------|
-| OpenAI | `api.openai.com` | `gpt-5.5` | 11 |
-| Anthropic | `api.anthropic.com` | `claude-sonnet-4-6` | 4 |
-| Google Gemini | `generativelanguage.googleapis.com` | `gemini-3.5-flash` | 4 |
-| xAI Grok | `api.x.ai` | `grok-4` | 4 |
-| Mistral | `api.mistral.ai` | `mistral-large-2` | 4 |
-| Cohere | `api.cohere.com` | `command-a` | 2 |
-| Perplexity | `api.perplexity.ai` | `sonar-pro` | 2 |
+| Mode | Behavior |
+| --- | --- |
+| `ask` | Ask before shell commands unless explicitly allowed. |
+| `auto-safe` | Auto-approve safe inspection/build/test commands and ask for risky commands. |
+| `yolo` | Auto-approve every shell command. Intended for trusted/headless usage only. |
 
-#### 🇨🇳 Chinese
+`auto` is accepted as a compatibility spelling for `auto-safe`.
 
-| Provider | Endpoint | Default Model | Models |
-|----------|----------|---------------|--------|
-| DeepSeek | `api.deepseek.com` | `deepseek-v4-pro` | 4 |
-| MiniMax | `api.minimax.io` | `MiniMax-M3` | 3 |
-| Z.ai / GLM | `open.bigmodel.cn` | `glm-5.2` | 5 |
-| Alibaba / Qwen | `dashscope.aliyuncs.com` | `qwen3.7-max` | 4 |
-| Moonshot / Kimi | `api.moonshot.cn` | `kimi-k2.6` | 4 |
-| Xiaomi / MiMo | `api.minimaxi.com` | `mimo-v2-pro` | 2 |
-| StepFun | `api.stepfun.com` | `step-2-16k` | 1 |
+## Sessions, Skills, And Specialists
 
-#### 🌐 Gateways
+Parallel stores project state under `.parallel/` in the selected project directory. That includes saved sessions, memory, skills, specialists, and session socket state.
 
-| Provider | Endpoint | Default Model | Models |
-|----------|----------|---------------|--------|
-| OpenRouter | `openrouter.ai` | `gpt-5.5` | 6 |
-| SiliconFlow | `api.siliconflow.cn` | `DeepSeek-V4-Pro` | 5 |
-| Atlas Cloud | `api.atlascloud.ai` | `deepseek-v4-pro` | 6 |
-| Requesty | `api.requesty.ai` | `gpt-5.5` | 6 |
-| Vercel AI Gateway | `api.vercel.ai` | `gpt-5.5` | 5 |
-
-#### ⚡ Inference
-
-| Provider | Endpoint | Default Model | Models |
-|----------|----------|---------------|--------|
-| Groq | `api.groq.com` | `qwen-2.5-coder-32b` | 4 |
-| Cerebras | `api.cerebras.ai` | `llama-4-maverick` | 4 |
-| Together AI | `api.together.xyz` | `llama-4-maverick` | 4 |
-| Fireworks | `api.fireworks.ai` | `llama4-maverick` | 4 |
-| DeepInfra | `api.deepinfra.com` | `llama-4-maverick` | 4 |
-| Novita | `api.novita.ai` | `llama-4-maverick` | 4 |
-| Hyperbolic | `api.hyperbolic.ai` | `llama-4-maverick` | 4 |
-| SambaNova | `api.sambanova.ai` | `llama-4-maverick` | 3 |
-
-#### 🏠 Local
-
-| Provider | Endpoint | Default Model | Models |
-|----------|----------|---------------|--------|
-| Ollama | `localhost:11434` | `qwen3-coder:480b` | 8 |
-| vLLM / SGLang | `localhost:8000` | — | 1 (placeholder) |
-
-All providers use OpenAI-compatible chat completions with tool calling. Any provider can be set as the default.
-
-**Custom providers:** You can add any OpenAI-compatible endpoint — name, URL, model ID, and API key.
-
-**Environment variables** (for headless / CI use):
-
-| Variable | Purpose |
-|----------|---------|
-| `PARALLEL_API_KEY` | API key for the default provider |
-| `DEEPSEEK_API_KEY` | API key for the DeepSeek provider (fallback) |
-| `PARALLEL_BASE_URL` | Override the default provider's base URL |
-| `PARALLEL_MODEL` | Override the session model |
-| `PARALLEL_NO_ALT_SCREEN=1` | Disable the alternate terminal screen |
-
-Configuration is stored in `~/.parallel/config.json`. Project state, sessions, skills, specialists, and memory are stored under `.parallel/` in the selected project directory.
-
-## Skills And Specialists
-
-Skills are markdown instruction files that agents can load with the `load_skill` tool or that you can force-load with `#skill-name` in a task.
-
-Locations:
-
-- Global skills: `~/.parallel/skills/`
-- Project skills: `.parallel/skills/`
-
-Specialists are markdown personas with optional pinned models.
-
-Locations:
-
-- Global specialists: `~/.parallel/specialists/`
-- Project specialists: `.parallel/specialists/`
-
-Example task with a forced skill:
+Skills are markdown instruction files agents can load with the `load_skill` tool or that you can force-load with `#skill-name` in a task:
 
 ```text
 > add Redis-backed caching for expensive lookups #redis
 ```
+
+Skill locations:
+
+- Global skills: `~/.parallel/skills/`
+- Project skills: `.parallel/skills/`
+
+Specialists are reusable personas with optional pinned models.
+
+Specialist locations:
+
+- Global specialists: `~/.parallel/specialists/`
+- Project specialists: `.parallel/specialists/`
 
 ## How Parallel Avoids Lost Work
 
@@ -391,73 +353,42 @@ When an agent writes a file:
 
 This keeps agents moving without allowing silent overwrites.
 
-## Codebase Map
+## Headless Mode
 
-The runtime is intentionally small:
+For CI and scripts, run without the TUI:
 
-- `src/index.tsx`: CLI entrypoint, TUI launch, attach mode, and headless mode.
-- `src/controller.ts`: session state, agents, approvals, questions, terminals, commits, and restores.
-- `src/coordination/blackboard.ts`: shared live state for agents, logs, notes, file activity, claims, and diffs.
-- `src/agents/agent.ts`: agent loop, mode instructions, live context injection, and completion.
-- `src/agents/tools.ts`: file, shell, note, skill, memory, and question tools.
-- `src/server.ts`: Unix socket bridge for dedicated agent terminals.
-- `src/ui/`: Ink components for the hub, timelines, settings, prompts, and attach UI.
-- `src/commands.ts`: hub command registry, hidden compatibility commands, aliases, and dispatch.
-- `src/config.ts` and `src/i18n.ts`: provider/session config and translations.
+```bash
+parallel --headless "fix lint failures" "update tests" --json
+```
+
+Headless mode:
+
+- runs one agent per task
+- uses the current folder as the project root
+- uses `yolo` shell approvals
+- auto-answers agent questions with the recommended option
+- saves the session
+- exits non-zero if any agent does not finish successfully
+
+## Package Contents
+
+The npm package is intentionally small. It publishes the compiled runtime and public release docs only:
+
+- `dist/`
+- `README.md`
+- `CHANGELOG.md`
+- `LICENSE`
+
+Internal development files such as source tests and design docs are not part of the npm package.
 
 ## Changelog
 
-### v0.4.3 — Model catalog refresh
+See [`CHANGELOG.md`](CHANGELOG.md).
 
-- Updated model names across all 29 providers (GPT-5.5, Claude 4, Gemini 3.x, DeepSeek v4)
-- Added `cacheHit` field to ModelPrice for prompt caching pricing
-- Pricing refresh: ~120 entries updated with current prices
-- Ollama default model changed to `qwen3-coder:480b`
+## Links
 
-### v0.4.2 — Provider catalog expansion
-
-- 29 pre-configured providers (+11 new: MiniMax, Z.ai/GLM, Alibaba/Qwen, Moonshot/Kimi, Xiaomi/MiMo, StepFun, SiliconFlow, Atlas Cloud, Requesty, Vercel AI Gateway, vLLM/SGLang)
-- Providers organized in 5 categories (Western, Chinese, Gateways, Inference, Local)
-- `category` field added to ProviderConfig for clean UI grouping
-- Emoji-prefixed section headers in Wizard and Settings
-- ~120 model pricing entries
-
-### 0.4.1
-
-- **17 pre-configured cloud providers** with verified endpoints and curated model lists (up from 8). Added: xAI/Grok, Perplexity, Cohere, DeepInfra, Fireworks, Cerebras, Novita, Hyperbolic, SambaNova.
-- **Ollama (local models)** as a first-class preset with automatic connectivity check and model detection.
-- **Wizard redesign** — provider selection now grouped by category (Configured, Cloud, Local, Custom) instead of a flat list.
-- **Settings reorganization** — all provider actions (keys, models, pricing, add/remove) consolidated under a "Providers" submenu; settings root reduced from 13 to 8 items.
-- **Provider removal** — can now remove configured providers from settings.
-- Custom provider option always available for any OpenAI-compatible endpoint.
-
-### 0.4.0
-
-- **Removed `/spawn`** — use `/task` instead. The alias was redundant and its removal simplified the command registry.
-- **System messages color-coded by severity** — green for success, yellow for warnings, red for errors, gray for informational. Applied across all ~40 system messages in every command.
-- **UI fully internationalized** — all wizard screens, menus, and prompts now available in English, French, Spanish, and Chinese (zh).
-- **AgentHub header indicators** — the hub header now shows the active mode, model, and context usage at a glance.
-- **Fixed `/pause` double-call** — rapid consecutive `/pause` invocations no longer trigger the action twice.
-
-## Development
-
-```bash
-npm install
-npm run build
-npm test
-```
-
-Use a local global link while developing:
-
-```bash
-npm link
-parallel --help
-```
-
-Published package:
-
-- npm: https://www.npmjs.com/package/@parallel-cli/parallel
-- GitHub: https://github.com/Nil06/parallel-cli
+- npm: [@parallel-cli/parallel](https://www.npmjs.com/package/@parallel-cli/parallel)
+- GitHub: [Nil06/parallel-cli](https://github.com/Nil06/parallel-cli)
 
 ## License
 

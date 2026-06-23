@@ -22,6 +22,7 @@ export function SelectList({
   allowInput,
   inputPlaceholder,
   mask,
+  height,
   onBack,
   onSelect,
   onInput,
@@ -30,6 +31,7 @@ export function SelectList({
   allowInput?: boolean;
   inputPlaceholder?: string;
   mask?: boolean;
+  height?: number;
   onBack?: () => void;
   onSelect?: (value: string) => void;
   onInput?: (value: string) => void;
@@ -69,6 +71,22 @@ export function SelectList({
       if (!typing) setIdx((i) => (i + 1) % Math.max(1, selectable.length));
       return;
     }
+    if (key.pageUp) {
+      if (!typing) setIdx((i) => Math.max(0, i - Math.max(1, Math.floor((height ?? 8) / 2))));
+      return;
+    }
+    if (key.pageDown) {
+      if (!typing) setIdx((i) => Math.min(Math.max(0, selectable.length - 1), i + Math.max(1, Math.floor((height ?? 8) / 2))));
+      return;
+    }
+    if ((key as any).home) {
+      if (!typing) setIdx(0);
+      return;
+    }
+    if ((key as any).end) {
+      if (!typing) setIdx(Math.max(0, selectable.length - 1));
+      return;
+    }
     if (key.tab || key.ctrl || key.meta) return;
     if (!allowInput || !input) return;
     // Pasted / chunked input may contain a newline → treat as validation.
@@ -84,10 +102,20 @@ export function SelectList({
   // Build a separate index map so up/down skip section headers.
   const selectable = items.map((it, i) => (it.section ? -1 : i)).filter((i) => i >= 0);
   const safeIdx = selectable.length > 0 ? selectable[Math.min(idx, selectable.length - 1)] : -1;
+  const maxVisible = height ? Math.max(1, height - (allowInput ? 2 : 0)) : items.length;
+  const start = items.length > maxVisible && safeIdx >= 0
+    ? Math.max(0, Math.min(safeIdx - Math.floor(maxVisible / 2), items.length - maxVisible))
+    : 0;
+  const visibleItems = items.slice(start, start + maxVisible);
+  const above = start;
+  const below = Math.max(0, items.length - start - visibleItems.length);
 
   return (
     <Box flexDirection="column">
-      {items.map((it, i) =>
+      {above > 0 ? <Text color="gray">▲ {above}</Text> : null}
+      {visibleItems.map((it, localIdx) => {
+        const i = start + localIdx;
+        return (
         it.section ? (
           <Box key={it.label} marginTop={i > 0 ? 1 : 0}>
             <Text bold color="white">
@@ -103,8 +131,10 @@ export function SelectList({
             {it.hint ? <Text color="gray"> {it.hint}</Text> : null}
             {it.detail ? <Text color="gray"> — {it.detail}</Text> : null}
           </Text>
-        ),
-      )}
+        )
+        );
+      })}
+      {below > 0 ? <Text color="gray">▼ {below}</Text> : null}
       {allowInput && (
         <Box marginTop={items.length > 0 ? 1 : 0}>
           <Text color={typing ? 'cyanBright' : 'gray'}>

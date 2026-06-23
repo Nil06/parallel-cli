@@ -120,6 +120,8 @@ export interface ProviderConfig {
   prices?: Record<string, ModelPrice>;
   /** Category for grouping in UI (western, chinese, gateways, inference, local) */
   category?: string;
+  /** False for local/OpenAI-compatible endpoints that do not require auth. */
+  requiresApiKey?: boolean;
 }
 
 /** Pricing of a model in USD per 1 million tokens. */

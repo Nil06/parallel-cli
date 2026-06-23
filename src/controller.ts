@@ -118,16 +118,17 @@ export class Controller extends EventEmitter {
 
   /** Resolve "model" or "provider:model" against the configured providers. */
   resolveModel(spec: string): { provider: ProviderConfig; model: string } | null {
-    const m = spec.match(/^([^:]+):(.+)$/);
-    if (m) {
-      const provider = getProvider(this.config, m[1].trim());
-      return provider ? { provider, model: m[2].trim() } : null;
+    const trimmed = spec.trim();
+    const sep = trimmed.indexOf(':');
+    if (sep > 0) {
+      const provider = getProvider(this.config, trimmed.slice(0, sep).trim());
+      if (provider) return { provider, model: trimmed.slice(sep + 1).trim() };
     }
     // bare model name: current session provider first, then any provider listing it
     const cur = this.sessionProvider();
-    if (cur) return { provider: cur, model: spec.trim() };
-    const any = this.config.providers.find((p) => p.models.includes(spec.trim()));
-    return any ? { provider: any, model: spec.trim() } : null;
+    if (cur) return { provider: cur, model: trimmed };
+    const any = this.config.providers.find((p) => p.models.includes(trimmed));
+    return any ? { provider: any, model: trimmed } : null;
   }
 
   private llmFor(provider: ProviderConfig, model: string): LLMClient {
@@ -705,7 +706,7 @@ export class Controller extends EventEmitter {
     const p = getProvider(this.config, name);
     if (!p) return false;
     this.session.providerName = p.name;
-    this.session.model = p.defaultModel;
+    this.session.model = p.defaultModel || p.models[0] || '';
     this.emit('update');
     return true;
   }
@@ -728,11 +729,11 @@ export class Controller extends EventEmitter {
     // if the session points at this provider, refresh its view
     if (this.session.providerName.toLowerCase() === p.name.toLowerCase()) {
       this.session.providerName = p.name;
-      if (!p.models.includes(this.session.model)) this.session.model = p.defaultModel;
+      if (!p.models.includes(this.session.model)) this.session.model = p.defaultModel || p.models[0] || '';
     }
     if (!this.session.providerName) {
       this.session.providerName = p.name;
-      this.session.model = p.defaultModel;
+      this.session.model = p.defaultModel || p.models[0] || '';
     }
     this.emit('update');
   }
@@ -769,7 +770,7 @@ export class Controller extends EventEmitter {
     if (this.session.providerName.toLowerCase() === name.toLowerCase()) {
       const fallback = this.config.providers[0];
       this.session.providerName = fallback?.name ?? '';
-      this.session.model = fallback?.defaultModel ?? '';
+      this.session.model = fallback?.defaultModel || fallback?.models[0] || '';
     }
     saveConfig(this.config);
     this.llmCache.clear();
