@@ -383,9 +383,22 @@ Parallel separates agent modes from shell approval behavior.
 
 - `ask`: ask before shell commands unless explicitly allowed.
 - `auto-safe`: auto-approve safe inspection/build/test commands and ask for risky commands.
-- `yolo`: auto-approve every shell command. Intended for trusted/headless usage only.
+- `yolo`: auto-approve every shell command. Intended only for fully trusted local runs.
 
 `auto` is accepted as a compatibility spelling for `auto-safe`.
+
+## Security And Privacy
+
+Parallel stores credentials and session state with owner-only permissions where supported:
+
+- `~/.parallel/config.json` and `~/.parallel/update.json` are written privately and atomically.
+- Project runtime files under `.parallel/` use private directories for sessions, conversations, memory, socket state, and attach tokens.
+- Attached terminals authenticate to the running session with a per-session token; local clients without the token cannot steer agents or answer approvals.
+- `/doctor` reports local permission warnings alongside provider, model, endpoint, attach socket, `git`, and `gh` checks.
+- Command output shown in logs is sanitized to strip terminal escape/control sequences.
+- Clipboard images require a second `Ctrl+V` confirmation before they are attached and sent to the selected model provider.
+
+Shell safety is still a shared responsibility. `auto-safe` uses conservative heuristics, while `yolo` deliberately grants full local command execution to agents.
 
 ## Sessions, Skills, And Specialists
 
@@ -444,10 +457,16 @@ Headless mode:
 
 - runs one agent per task
 - uses the current folder as the project root
-- uses `yolo` shell approvals
+- uses `auto-safe` shell approvals by default
 - auto-answers agent questions with the recommended option
 - saves the session
 - exits non-zero if any agent does not finish successfully
+
+For fully trusted automation where every shell command should be approved without prompts, opt in explicitly:
+
+```bash
+parallel --headless --yolo "run the release checklist" --json
+```
 
 ## Package Contents
 

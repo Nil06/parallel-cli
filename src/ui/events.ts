@@ -14,6 +14,7 @@ export type UIEventKind =
   | 'error'
   | 'intent'
   | 'note'
+  | 'memory'
   | 'system';
 
 export interface UIEvent {
@@ -75,6 +76,7 @@ function classify(log: LogEntry): UIEvent {
     return { agentId: log.agentId, kind: 'note', label: 'steps', detail: cleaned || text, ts: log.ts, seq: log.seq };
   }
   if (log.kind === 'note') return { agentId: log.agentId, kind: 'note', label: 'note', detail: cleaned || text, ts: log.ts, seq: log.seq };
+  if (log.kind === 'memory') return { agentId: log.agentId, kind: 'memory', label: 'memory', detail: cleaned || text, ts: log.ts, seq: log.seq };
   if (log.kind === 'system') return { agentId: log.agentId, kind: 'system', label: 'system', detail: cleaned || text, ts: log.ts, seq: log.seq };
   if (log.kind === 'llm') return { agentId: log.agentId, kind: 'thought', label: 'thinking', detail: cleaned.replace(/^✻\s*/, ''), ts: log.ts, seq: log.seq };
   if (/^\$\s*/.test(cleaned)) {
@@ -161,6 +163,7 @@ function commandCategory(command: string): TimelineCategory {
 function categoryFor(e: UIEvent): TimelineCategory {
   if (e.kind === 'error') return 'result';
   if (e.kind === 'note' || e.kind === 'approval' || e.kind === 'question') return 'coordinate';
+  if (e.kind === 'memory') return 'other';
   if (e.kind === 'intent') return 'other';
   if (e.kind === 'file') {
     if (e.label === 'write' || e.label === 'edit' || e.label === 'claim') return 'change';

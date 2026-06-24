@@ -5,10 +5,11 @@ import { exec, execFileSync, spawn } from 'node:child_process';
 import { Blackboard } from './coordination/blackboard.js';
 import { LLMClient } from './llm/client.js';
 import { Agent } from './agents/agent.js';
-import { saveConfig, getProvider, upsertProvider } from './config.js';
+import { configFile, saveConfig, getProvider, upsertProvider } from './config.js';
 import { priceFor, fmtCost } from './pricing.js';
 import { loadSkills, loadSpecialists } from './skills.js';
 import { t } from './i18n.js';
+import { chmodPrivateTree, ensurePrivateDir, sanitizeForPersistence, writeFileAtomicPrivate } from './security.js';
 import type {
   AgentQuestion,
   ApprovalRequest,
@@ -38,11 +39,28 @@ export function isRiskyCommand(command: string): boolean {
   if (/\b(chmod|chown)\s+-[^\s]*r\b/.test(c) || /\b(chmod|chown)\s+.*\s-r\b/.test(c)) return true;
   if (/\bmv\b.*\s(\/|~|\.\.)/.test(c)) return true;
   if (/\b(curl|wget)\b.*\|\s*(sh|bash|zsh|python|node)\b/.test(c)) return true;
+  if (/\b(curl|wget)\b.*(&&|;)\s*(sh|bash|zsh|python|node)\b/.test(c)) return true;
+  if (/\b(curl|wget)\b.*\b(-o|--output|--output-document)\b.*(&&|;)\s*(sh|bash|zsh|python|node)\b/.test(c)) return true;
+  if (/\b(curl|wget)\b.*\b(--upload-file|-t|--data|--data-binary|--form|-f)\b/i.test(command)) return true;
+  if (/\b(nc|ncat|netcat|socat|telnet|ssh|scp|rsync)\b/.test(c)) return true;
+  if (/\/dev\/tcp|\/dev\/udp/.test(c)) return true;
+  if (/\b(bash|sh|zsh)\s+-c\b/.test(c)) return true;
+  if (/\b(python|python3|node|perl|ruby)\s+(-c|-e)\b/.test(c)) return true;
+  if (/\bphp\s+-r\b/.test(c)) return true;
+  if (/\bbase64\b.*\|\s*(sh|bash|zsh|python|node)\b/.test(c)) return true;
+  if (/\b(eval|source)\b/.test(c)) return true;
+  if (/[>|]{1,2}\s*(\/etc\/|\/usr\/|\/bin\/|\/sbin\/|~\/\.ssh\/|~\/\.parallel\/)/.test(c)) return true;
+  if (/\b(cat|sed|awk|rg|grep)\b.*(~\/\.ssh|~\/\.parallel|\.env)\b.*\|\s*(curl|wget|nc|ncat|socat)\b/.test(c)) return true;
+  if (/\b(npm|pnpm|yarn)\s+run\s+(deploy|publish|postinstall|preinstall|prepare)\b/.test(c)) return true;
   if (/\bgit\s+(reset|clean)\b/.test(c)) return true;
   if (/\bgit\s+push\b.*(--force|-f)\b/.test(c)) return true;
   if (/\b(drop|truncate)\s+(table|database|schema)\b/.test(c)) return true;
   if (/\b(prisma|knex|typeorm|sequelize|rails)\b.*\b(drop|reset|rollback|migrate)\b/.test(c)) return true;
   return false;
+}
+
+function commandApprovalKey(command: string): string {
+  return command.trim().replace(/\s+/g, ' ');
 }
 
 /**
@@ -79,6 +97,8 @@ export class Controller extends EventEmitter {
   /** The session restored at startup (source of /restore conversations). */
   loadedSession: SessionData | null = null;
   private sessionOnlyProvider: ProviderConfig | null = null;
+  private readonly sessionRetentionDays = 30;
+  private readonly sessionRetentionMax = 30;
 
   constructor(
     public config: ParallelConfig,
@@ -96,6 +116,7 @@ export class Controller extends EventEmitter {
     this.board.on('update', () => this.emit('update'));
     this.board.on('agent-event', (ev: any) => this.onAgentEvent(ev));
     this.board.on('note', (note: Note) => this.nudgeFromNote(note));
+    this.hardenPrivateState();
     // Autosave: the session (+ conversations, written live by agents) survives a crash.
     const autosave = setInterval(() => this.saveSession(), 30_000);
     autosave.unref();
@@ -208,8 +229,8 @@ export class Controller extends EventEmitter {
   // ---------- approvals ----------
 
   private requestApproval = (agentId: string, command: string): Promise<boolean> => {
-    const base = command.trim().split(/\s+/)[0];
-    if (this.sessionAllowedCommands.has(base)) return Promise.resolve(true);
+    const key = commandApprovalKey(command);
+    if (this.sessionAllowedCommands.has(key)) return Promise.resolve(true);
     if (this.session.approvalMode === 'yolo') return Promise.resolve(true);
     if (this.session.approvalMode === 'auto-safe' && !isRiskyCommand(command)) return Promise.resolve(true);
     return new Promise<boolean>((resolve) => {
@@ -230,7 +251,7 @@ export class Controller extends EventEmitter {
     if (idx === -1) return;
     const [req] = this.approvals.splice(idx, 1);
     if (approved && always) {
-      this.sessionAllowedCommands.add(req.command.trim().split(/\s+/)[0]);
+      this.sessionAllowedCommands.add(commandApprovalKey(req.command));
     }
     req.resolve(approved);
     this.emit('update');
@@ -297,6 +318,33 @@ export class Controller extends EventEmitter {
     }
   }
 
+  hardenPrivateState(): void {
+    try {
+      chmodPrivateTree(path.join(this.projectRoot, '.parallel'));
+    } catch {
+      // Best effort only.
+    }
+  }
+
+  securityDiagnostics(): string[] {
+    const checks = [
+      { label: 'config file', file: configFile(), maxMode: 0o600 },
+      { label: 'project .parallel', file: path.join(this.projectRoot, '.parallel'), maxMode: 0o700 },
+      { label: 'sessions dir', file: this.sessionsDir(), maxMode: 0o700 },
+    ];
+    const out: string[] = [];
+    for (const check of checks) {
+      try {
+        if (!fs.existsSync(check.file)) continue;
+        const mode = fs.statSync(check.file).mode & 0o777;
+        out.push(`${mode <= check.maxMode ? 'ok' : 'warn'} ${check.label}: ${mode.toString(8)}`);
+      } catch {
+        out.push(`warn ${check.label}: unreadable`);
+      }
+    }
+    return out;
+  }
+
   /** Launch agent N+1 — works at any time, even while others are running. */
   spawnAgent(
     task: string,
@@ -332,7 +380,7 @@ export class Controller extends EventEmitter {
     let historyFile: string | undefined;
     try {
       const convDir = path.join(this.sessionsDir(), 'conversations');
-      fs.mkdirSync(convDir, { recursive: true });
+      ensurePrivateDir(convDir);
       historyFile = path.join(
         convDir,
         `${this.sessionStamp}-${id}-${agentName.replace(/[^\w.-]+/g, '_')}.jsonl`,
@@ -649,6 +697,29 @@ export class Controller extends EventEmitter {
     return path.join(this.projectRoot, '.parallel', 'sessions');
   }
 
+  private cleanupOldSessions(dir: string): void {
+    try {
+      const cutoff = Date.now() - this.sessionRetentionDays * 24 * 60 * 60 * 1000;
+      const files = fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith('.json'))
+        .map((name) => {
+          const file = path.join(dir, name);
+          const stat = fs.statSync(file);
+          return { file, mtimeMs: stat.mtimeMs };
+        })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+      for (const [index, item] of files.entries()) {
+        if (index < this.sessionRetentionMax && item.mtimeMs >= cutoff) continue;
+        try {
+          fs.unlinkSync(item.file);
+        } catch {}
+      }
+    } catch {
+      // Retention is best effort and must never break autosave.
+    }
+  }
+
   /**
    * Save the session to a STABLE file (one per run, overwritten by the 30s
    * autosave) — `/save <name>` additionally gives it a friendly name.
@@ -658,7 +729,8 @@ export class Controller extends EventEmitter {
     if (this.board.agents.size === 0 && this.board.notes.length === 0) return null;
     try {
       const dir = this.sessionsDir();
-      fs.mkdirSync(dir, { recursive: true });
+      ensurePrivateDir(dir);
+      this.cleanupOldSessions(dir);
       const providerName = this.sessionProvider()?.name ?? this.session.providerName;
       const trimChange = (c: FileChange): FileChange => ({
         ...c,
@@ -698,7 +770,7 @@ export class Controller extends EventEmitter {
         changedFiles: [...new Set(this.board.changes.map((c) => c.path))],
       };
       const file = path.join(dir, `session-${this.sessionStamp}.json`);
-      fs.writeFileSync(file, JSON.stringify(data, null, 2));
+      writeFileAtomicPrivate(file, sanitizeForPersistence(JSON.stringify(data, null, 2)));
       return file;
     } catch {
       return null;

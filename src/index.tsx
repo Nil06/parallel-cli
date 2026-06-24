@@ -24,6 +24,8 @@ const firstRun = argv.includes('--first-run');
 if (firstRun) argv.splice(argv.indexOf('--first-run'), 1);
 const headless = argv.includes('--headless');
 if (headless) argv.splice(argv.indexOf('--headless'), 1);
+const yolo = argv.includes('--yolo');
+if (yolo) argv.splice(argv.indexOf('--yolo'), 1);
 const jsonOut = argv.includes('--json');
 if (jsonOut) argv.splice(argv.indexOf('--json'), 1);
 const noUpdate = argv.includes('--no-update');
@@ -46,7 +48,9 @@ Usage:
                           Start without checking npm for a newer Parallel version
   parallel --headless "task1" ["task2"…] [--json]
                           No TUI: one agent per task in the current folder,
-                          auto-approved commands, summary (or JSON) on stdout — for CI
+                          auto-safe shell, summary (or JSON) on stdout — for CI
+  parallel --headless --yolo "task"
+                          Dangerous: approve every shell command without prompts.
 
 Environment variables:
   PARALLEL_API_KEY                      API key for the default provider
@@ -86,17 +90,23 @@ if (argv[0] === 'attach') {
   }
   const config = loadConfig();
   if (config.language) setLang(config.language);
-  const { socketPath } = await import('./server.js');
+  const { readSessionToken, socketPath } = await import('./server.js');
   const sock = socketPath(root);
   if (!fs.existsSync(sock)) {
     console.error(`No running Parallel session found in ${root} (missing ${sock}).`);
     console.error('Start `parallel` in that folder first, then re-run attach.');
     process.exit(1);
   }
+  const token = readSessionToken(root);
+  if (!token) {
+    console.error(`No attach authentication token found in ${root}.`);
+    console.error('Restart the main Parallel session, then re-run attach.');
+    process.exit(1);
+  }
   const { AttachApp } = await import('./ui/AttachApp.js');
   // NO alternate screen here: <Static> writes into the native scrollback,
   // so the user can scroll this agent's history like any terminal output.
-  const attachApp = render(<AttachApp agentRef={agentRef} sock={sock} />, { exitOnCtrlC: true });
+  const attachApp = render(<AttachApp agentRef={agentRef} sock={sock} token={token} />, { exitOnCtrlC: true });
   await attachApp.waitUntilExit();
   process.exit(0);
 }
@@ -111,8 +121,9 @@ if (headless) {
   const config = loadConfig();
   if (config.language) setLang(config.language);
   const ctl = new Controller(config, process.cwd());
-  // No human in the loop: commands are auto-approved.
-  ctl.setSessionApprovalMode('yolo');
+  // No TUI approval prompt in headless: keep a conservative shell policy unless the
+  // user explicitly opts into the dangerous legacy behavior.
+  ctl.setSessionApprovalMode(yolo ? 'yolo' : 'auto-safe');
   const provider = ctl.sessionProvider();
   if (!provider || !providerReady(provider)) {
     console.error('Headless mode needs a ready provider and model. Run `parallel` interactively once, or set PARALLEL_API_KEY / PARALLEL_MODEL.');
@@ -120,6 +131,7 @@ if (headless) {
   }
   // Agent questions cannot be asked: auto-answer with the recommended option.
   ctl.on('update', () => {
+    for (const approval of [...ctl.approvals]) ctl.answerApproval(approval.id, false, false);
     for (const q of [...ctl.questions]) ctl.answerQuestion(q.id, q.options[q.recommended] ?? '', true);
   });
   for (const task of tasks) {

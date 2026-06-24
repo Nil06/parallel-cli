@@ -126,6 +126,8 @@ export function CommandInput({
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const [cursorOn, setCursorOn] = useState(true);
   const attSeq = useRef(0);
+  const imageConsentUntil = useRef(0);
+  const imageConsentGranted = useRef(false);
 
   const reset = () => {
     setValue('');
@@ -166,6 +168,13 @@ export function CommandInput({
       notify?.(t('input.imageNone'));
       return;
     }
+    const now = Date.now();
+    if (!imageConsentGranted.current && imageConsentUntil.current < now) {
+      imageConsentUntil.current = now + 10_000;
+      notify?.(t('input.imageConsent'));
+      return;
+    }
+    imageConsentGranted.current = true;
     const n = ++attSeq.current;
     setAttachments((arr) => [...arr, { kind: 'image', n, dataUri: img.dataUri, label: img.label }]);
     notify?.(t('input.imageAdded'));

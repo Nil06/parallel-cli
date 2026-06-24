@@ -95,7 +95,7 @@ export interface WorkMapWarning {
   count?: number;
 }
 
-export type LogKind = 'info' | 'tool' | 'tool_result' | 'llm' | 'error' | 'note' | 'system';
+export type LogKind = 'info' | 'tool' | 'tool_result' | 'llm' | 'error' | 'note' | 'system' | 'memory';
 
 export interface LogEntry {
   agentId: string; // '' = global/system

@@ -14,6 +14,7 @@ export const KIND_COLOR: Record<string, string> = {
   llm: UI.muted,
   error: UI.danger,
   note: UI.note,
+  memory: COLOR.creamMuted,
   system: UI.warn,
   info: UI.text,
 };

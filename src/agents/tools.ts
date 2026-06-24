@@ -5,6 +5,7 @@ import * as Diff from 'diff';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { Blackboard } from '../coordination/blackboard.js';
 import type { AgentMode, AgentProgressStep, Skill } from '../types.js';
+import { appendFilePrivate, ensurePrivateDir, sanitizeTerminalText, writeFileAtomicPrivate } from '../security.js';
 
 const IGNORED = new Set(['node_modules', '.git', '.parallel', '.cursor', 'dist', '__pycache__', '.venv', 'venv']);
 const MAX_OUTPUT = 12_000;
@@ -16,6 +17,9 @@ function isMutatingShell(command: string): boolean {
   if (/\b(git\s+(add|commit|push|pull|merge|rebase|checkout|switch|reset|clean|stash|tag))\b/.test(c)) return true;
   if (/\b(npm|pnpm|yarn)\s+(install|add|remove|update|audit\s+fix)\b/.test(c)) return true;
   if (/[>|]\s*(sh|bash)\b/.test(c) || /\b(curl|wget)\b.*\|\s*(sh|bash)/.test(c)) return true;
+  if (/\b(curl|wget)\b.*(&&|;)\s*(sh|bash|zsh|python|node)\b/.test(c)) return true;
+  if (/\b(nc|ncat|netcat|socat|telnet|ssh|scp|rsync)\b/.test(c)) return true;
+  if (/\b(bash|sh|zsh)\s+-c\b|\b(python|python3|node|perl|ruby)\s+(-c|-e)\b/.test(c)) return true;
   return false;
 }
 
@@ -564,12 +568,12 @@ export class ToolExecutor {
     const f = fact.trim();
     if (!f) return 'ERROR: remember needs a non-empty fact.';
     const file = path.join(this.projectRoot, '.parallel', 'memory.md');
-    fs.mkdirSync(path.dirname(file), { recursive: true });
+    ensurePrivateDir(path.dirname(file));
     if (!fs.existsSync(file)) {
-      fs.writeFileSync(file, '# Project memory\n\nDurable facts agents recorded. Injected into every agent\'s system prompt.\n\n');
+      writeFileAtomicPrivate(file, '# Project memory\n\nDurable facts agents recorded. Injected into every agent\'s system prompt.\n\n');
     }
     const line = `- ${f} _(${this.agentName}, ${new Date().toISOString().slice(0, 10)})_\n`;
-    fs.appendFileSync(file, line);
+    appendFilePrivate(file, line);
     this.board.log(this.agentId, 'tool', `🧠 remember: ${f.slice(0, 80)}`);
     return 'Fact saved to the project memory. Every future agent will see it.';
   }
@@ -863,8 +867,8 @@ export class ToolExecutor {
         { cwd: this.projectRoot, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 },
         (err, stdout, stderr) => {
           let out = '';
-          if (stdout) out += stdout;
-          if (stderr) out += (out ? '\n--- stderr ---\n' : '') + stderr;
+          if (stdout) out += sanitizeTerminalText(stdout);
+          if (stderr) out += (out ? '\n--- stderr ---\n' : '') + sanitizeTerminalText(stderr);
           if (err && (err as any).killed) out += '\n(process killed: 120s timeout)';
           else if (err) out += `\n(exit code: ${(err as any).code ?? 1})`;
           if (out.length > MAX_OUTPUT) out = out.slice(0, MAX_OUTPUT) + '\n... (output truncated)';

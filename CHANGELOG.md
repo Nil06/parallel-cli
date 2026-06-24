@@ -2,6 +2,30 @@
 
 All notable changes to Parallel are documented here.
 
+## 0.4.9 - 2026-06-24
+
+### 0.4.9 Added
+
+- Added private, atomic persistence helpers for config, update state, session snapshots, conversations, and project memory.
+- Added per-session attach socket authentication with a private token file and owner-only socket permissions.
+- Added security diagnostics to `/doctor` for local config and `.parallel` permissions.
+- Added a visible clipboard image consent step before sending pasted images to the selected model provider.
+- Added a dedicated long-memory compaction UX signal with cleaner wording, spacing, and timeline rendering.
+
+### 0.4.9 Changed
+
+- Changed `--headless` to use `auto-safe` shell approvals by default; full auto-approval now requires explicit `--yolo`.
+- Hardened shell risk detection for download-and-execute chains, inline interpreters, network exfiltration tools, sensitive redirections, and risky package scripts.
+- Scoped “always approve” shell approvals to the normalized full command instead of the command basename.
+- Marked user tasks, live notes, restored summaries, and agent state as untrusted data in model context so they cannot override safety or tool policy.
+- Added best-effort cleanup for old saved sessions.
+
+### 0.4.9 Fixed
+
+- Fixed sensitive files inheriting permissive umasks such as `0644` on systems with group-writable defaults.
+- Fixed unauthenticated local processes being able to control a running attach socket.
+- Fixed ANSI/OSC terminal escape sequences passing through command output logs unfiltered.
+
 ## 0.4.8 - 2026-06-24
 
 ### 0.4.8 Changed

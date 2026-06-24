@@ -1,8 +1,10 @@
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import type { Controller } from './controller.js';
 import type { AgentInfo, AgentMode, LogEntry } from './types.js';
+import { ensurePrivateDir, writeFileAtomicPrivate } from './security.js';
 
 /**
  * Session server — the bridge that makes MULTI-TERMINAL Parallel possible.
@@ -14,7 +16,7 @@ import type { AgentInfo, AgentMode, LogEntry } from './types.js';
  * real-time instruction — exactly like `@a1 <message>` in the main TUI.
  *
  * Protocol (newline-delimited JSON):
- *   client → server  {type:'hello', agent}          subscribe to one agent
+ *   client → server  {type:'hello', agent, token}   authenticate and subscribe
  *   client → server  {type:'input', agent, text}    steer the agent
  *   client → server  {type:'send', target, text}    steer one agent or broadcast
  *   client → server  {type:'stop', target}          stop one agent or all
@@ -34,19 +36,35 @@ interface AttachedClient {
   socket: net.Socket;
   agent: string; // name or alias, as given by the client
   lastSeq: number;
+  authenticated: boolean;
 }
 
 export function socketPath(projectRoot: string): string {
   return path.join(projectRoot, '.parallel', 'session.sock');
 }
 
+export function sessionTokenPath(projectRoot: string): string {
+  return path.join(projectRoot, '.parallel', 'session.token');
+}
+
+export function readSessionToken(projectRoot: string): string | null {
+  try {
+    return fs.readFileSync(sessionTokenPath(projectRoot), 'utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Start the session server. Returns a stop function (closes socket + clients). */
 export function startSessionServer(ctl: Controller): (() => void) | null {
   const sock = socketPath(ctl.projectRoot);
+  const tokenFile = sessionTokenPath(ctl.projectRoot);
+  const token = randomBytes(32).toString('hex');
   try {
-    fs.mkdirSync(path.dirname(sock), { recursive: true });
+    ensurePrivateDir(path.dirname(sock));
     // A previous run may have crashed without cleaning up: remove the stale socket.
     if (fs.existsSync(sock)) fs.unlinkSync(sock);
+    writeFileAtomicPrivate(tokenFile, token);
   } catch {
     return null;
   }
@@ -104,7 +122,7 @@ export function startSessionServer(ctl: Controller): (() => void) | null {
   ctl.on('update', onUpdate);
 
   const server = net.createServer((socket) => {
-    const client: AttachedClient = { socket, agent: '', lastSeq: 0 };
+    const client: AttachedClient = { socket, agent: '', lastSeq: 0, authenticated: false };
     let buffer = '';
     socket.setEncoding('utf8');
     socket.on('data', (chunk: string) => {
@@ -121,9 +139,17 @@ export function startSessionServer(ctl: Controller): (() => void) | null {
           continue;
         }
         if (msg.type === 'hello' && typeof msg.agent === 'string') {
+          if (msg.token !== token) {
+            send(socket, { type: 'bye' });
+            socket.destroy();
+            continue;
+          }
+          client.authenticated = true;
           client.agent = msg.agent;
           clients.add(client);
           pushTo(client); // immediate first snapshot (full backlog: lastSeq = 0)
+        } else if (!client.authenticated) {
+          continue;
         } else if (msg.type === 'input' && typeof msg.text === 'string' && client.agent) {
           const text = msg.text.trim();
           if (!text) continue;
@@ -167,6 +193,13 @@ export function startSessionServer(ctl: Controller): (() => void) | null {
   } catch {
     return null;
   }
+  server.on('listening', () => {
+    try {
+      fs.chmodSync(sock, 0o600);
+    } catch {
+      /* best effort */
+    }
+  });
   server.on('error', () => {
     /* keep the TUI alive even if the server dies */
   });
@@ -181,6 +214,11 @@ export function startSessionServer(ctl: Controller): (() => void) | null {
     server.close();
     try {
       fs.unlinkSync(sock);
+    } catch {
+      /* already gone */
+    }
+    try {
+      fs.unlinkSync(tokenFile);
     } catch {
       /* already gone */
     }

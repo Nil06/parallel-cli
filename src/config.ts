@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { ParallelConfig, ProviderConfig } from './types.js';
+import { chmodPrivateTree, ensurePrivateDir, writeJsonAtomicPrivate } from './security.js';
 
 let configHomeOverride: string | undefined;
 
@@ -368,6 +369,8 @@ function normalizeConfig(cfg: ParallelConfig): void {
 export function loadConfig(): ParallelConfig {
   let cfg: ParallelConfig = { ...DEFAULTS, providers: [] };
   try {
+    ensurePrivateDir(configDir());
+    chmodPrivateTree(configDir());
     const file = configFile();
     if (fs.existsSync(file)) {
       const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
@@ -414,8 +417,8 @@ export function loadConfig(): ParallelConfig {
 
 export function saveConfig(cfg: ParallelConfig): void {
   try {
-    fs.mkdirSync(configDir(), { recursive: true });
-    fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2));
+    ensurePrivateDir(configDir());
+    writeJsonAtomicPrivate(configFile(), cfg);
   } catch {
     // best effort
   }

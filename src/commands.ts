@@ -213,6 +213,10 @@ async function doctorReport(ctl: Controller, ui: UIActions): Promise<void> {
 
   const sock = path.join(ctl.projectRoot, '.parallel', 'session.sock');
   lines.push(fs.existsSync(sock) ? t('m.doctorAttachOk') : t('m.doctorAttachMissing'));
+  for (const line of ctl.securityDiagnostics()) {
+    if (line.startsWith('warn') && level !== 'error') level = 'warn';
+    lines.push(`security ${line}`);
+  }
   lines.push(commandExists('git') ? t('m.doctorGitOk') : t('m.doctorGitMissing'));
   lines.push(commandExists('gh') ? t('m.doctorGhOk') : t('m.doctorGhMissing'));
 

@@ -4,6 +4,7 @@ import readline from 'node:readline';
 import { spawn } from 'node:child_process';
 import { configDir } from './config.js';
 import { PACKAGE_NAME, VERSION } from './version.js';
+import { ensurePrivateDir, writeJsonAtomicPrivate } from './security.js';
 
 export interface UpdateState {
   lastCheckAt?: number;
@@ -46,8 +47,8 @@ export function readUpdateState(): UpdateState {
 
 export function writeUpdateState(state: UpdateState): void {
   try {
-    fs.mkdirSync(configDir(), { recursive: true });
-    fs.writeFileSync(updateStateFile(), JSON.stringify(state, null, 2));
+    ensurePrivateDir(configDir());
+    writeJsonAtomicPrivate(updateStateFile(), state);
   } catch {
     /* best effort */
   }

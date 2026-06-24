@@ -61,6 +61,16 @@ function TimelineRow({ item, cols }: { item: TimelineItem; cols: number }) {
       </Box>
     );
   }
+  if (item.label === 'memory') {
+    return (
+      <Box flexDirection="column" marginTop={1} marginBottom={1} borderStyle="round" borderColor={UI.muted} paddingX={1}>
+        <Text color={UI.muted} wrap="wrap">
+          <Text bold>o </Text>
+          {truncate(item.detail ?? '', max)}
+        </Text>
+      </Box>
+    );
+  }
   if (item.kind === 'command') {
     return (
       <Box flexDirection="column" marginTop={1}>

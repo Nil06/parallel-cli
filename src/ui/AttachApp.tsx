@@ -123,6 +123,16 @@ function AttachStaticLine({ item, raw }: { item: StaticLine; raw: boolean }) {
   }
   const event = toUIEvents([item.log])[0];
   if (!event || event.kind === 'thought') return <Text color={UI.muted}> </Text>;
+  if (event.kind === 'memory') {
+    return (
+      <Box flexDirection="column" marginTop={1} marginBottom={1} borderStyle="round" borderColor={UI.muted} paddingX={1}>
+        <Text color={COLOR.creamMuted} wrap="wrap">
+          <Text bold>o </Text>
+          {truncate(event.detail, process.stdout.columns ? process.stdout.columns - 8 : 120)}
+        </Text>
+      </Box>
+    );
+  }
   const color = event.kind === 'error' ? UI.danger : event.kind === 'note' ? UI.note : event.kind === 'command' ? UI.accent : UI.muted;
   const detail = event.detail.replace(/\r/g, '').split('\n').filter(Boolean).slice(0, 3).join(' ↳ ');
   return (
@@ -175,7 +185,7 @@ function AttachResultCard({ item }: { item: ResultCard }) {
   );
 }
 
-export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }) {
+export function AttachApp({ agentRef, sock, token }: { agentRef: string; sock: string; token: string }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [info, setInfo] = useState<AgentInfo | null>(null);
@@ -201,7 +211,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
     let buffer = '';
     socket.setEncoding('utf8');
     socket.on('connect', () => {
-      socket.write(JSON.stringify({ type: 'hello', agent: agentRef }) + '\n');
+      socket.write(JSON.stringify({ type: 'hello', agent: agentRef, token }) + '\n');
     });
     socket.on('data', (chunk: string) => {
       buffer += chunk;
@@ -235,7 +245,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
     return () => {
       socket.destroy();
     };
-  }, [agentRef, sock]);
+  }, [agentRef, sock, token]);
 
   useEffect(() => {
     if (!info || launchRendered.current) return;
