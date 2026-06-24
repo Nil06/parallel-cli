@@ -17,6 +17,7 @@ import type { AgentInfo, AgentMode, LogEntry } from './types.js';
  *   client → server  {type:'hello', agent}          subscribe to one agent
  *   client → server  {type:'input', agent, text}    steer the agent
  *   client → server  {type:'send', target, text}    steer one agent or broadcast
+ *   client → server  {type:'stop', target}          stop one agent or all
  *   client → server  {type:'spawn', text, mode?}    launch agent N+1 from ANY terminal
  *   client → server  {type:'approve', id, approved, always}  answer an approval
  *   client → server  {type:'answer', id, text}      answer an agent question
@@ -141,6 +142,11 @@ export function startSessionServer(ctl: Controller): (() => void) | null {
           if (!text || !target) continue;
           if (target.toLowerCase() === 'all') ctl.broadcast(text);
           else ctl.sendToAgent(target, text);
+        } else if (msg.type === 'stop' && typeof msg.target === 'string') {
+          const target = msg.target.trim();
+          if (!target) continue;
+          if (target.toLowerCase() === 'all') ctl.stopAll();
+          else ctl.stopAgent(target);
         } else if (msg.type === 'spawn' && typeof msg.text === 'string') {
           // Agent N+1 can be launched from ANY terminal of the session —
           // its own dedicated terminal then opens automatically.

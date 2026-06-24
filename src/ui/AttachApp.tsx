@@ -71,6 +71,7 @@ const TERMINAL_STATES = new Set<AgentInfo['state']>(['done', 'error', 'stopped']
 export type AttachCommand =
   | { type: 'detach' }
   | { type: 'raw' }
+  | { type: 'stop'; target?: string }
   | { type: 'spawn'; text: string; mode: AgentMode }
   | { type: 'send'; target: string; text: string }
   | { type: 'input'; text: string };
@@ -80,6 +81,8 @@ export function parseAttachCommand(text: string): AttachCommand | null {
   if (!v) return null;
   if (v === '/quit' || v === '/exit' || v === '/detach') return { type: 'detach' };
   if (v === '/raw') return { type: 'raw' };
+  const stop = v.match(/^\/stop(?:\s+(\S+))?$/s);
+  if (stop) return { type: 'stop', target: stop[1]?.trim() };
   const at = v.match(/^@(\S+)\s+(.+)$/s);
   if (at) return { type: 'send', target: at[1], text: at[2].trim() };
   const send = v.match(/^\/send\s+(\S+)\s+(.+)$/s);
@@ -102,7 +105,8 @@ export function parseAttachCommand(text: string): AttachCommand | null {
 
 export function formatAttachFooter(info: AgentInfo | null): string {
   if (!info) return 'Waiting for agent · /quit';
-  return `${middleTruncate(info.model, 28)} · ${formatAgentTelemetry(info)} · plain text steers · /task new · /quit`;
+  const control = ['thinking', 'working', 'listening', 'waiting', 'paused'].includes(info.state) ? ' · /stop' : '';
+  return `${middleTruncate(info.model, 28)} · ${formatAgentTelemetry(info)} · plain text steers${control} · /task new · /quit`;
 }
 
 function AttachStaticLine({ item, raw }: { item: StaticLine; raw: boolean }) {
@@ -274,6 +278,10 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
       setRaw((r) => !r);
       return;
     }
+    if (cmd.type === 'stop') {
+      wire({ type: 'stop', target: cmd.target || agentRef });
+      return;
+    }
     // /task|/ask|/plan|/review <text> — launch agent N+1 from this terminal.
     if (cmd.type === 'spawn') {
       wire({ type: 'spawn', text: cmd.text, mode: cmd.mode });
@@ -299,6 +307,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
     Math.max(0, logs.length - timelineVisibleLogs - clampedTimelineScroll),
     logs.length - clampedTimelineScroll,
   );
+  const liveTimelineLogs = logs.slice(-Math.max(6, Math.min(14, Math.floor((stdout?.rows ?? 30) / 2))));
 
   useEffect(() => {
     if (timelineFollowTail) setTimelineScroll(0);
@@ -372,7 +381,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
             <Text color={modeBadge(info.mode).color}>[{modeBadge(info.mode).label}]</Text>{' '}
             <Text color={st.color} bold>{st.mark} {st.label}</Text>
             <Text color={UI.muted}>
-              {' '}· {elapsed(info.startedAt)} · {info.steps} st ·{' '}
+              {' '}· {elapsed(info.startedAt, info.endedAt)} · {info.steps} st ·{' '}
               {Math.round((info.tokensIn + info.tokensOut) / 1000)}k ·{' '}
             </Text>
             <Text color={UI.ok}>{info.cost === null ? '$-' : fmtCost(info.cost)}</Text>
@@ -383,6 +392,12 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
             </Text>
           ) : null}
           <ProgressSteps agent={info} max={6} cols={process.stdout.columns || 100} />
+          {busy && timelineFollowTail && liveTimelineLogs.length > 0 ? (
+            <Box flexDirection="column" marginTop={1}>
+              <Text color={UI.muted} bold>Live activity</Text>
+              <Timeline logs={liveTimelineLogs} cols={process.stdout.columns || 100} />
+            </Box>
+          ) : null}
           {terminal && info.lastResult ? (
             <Text color={COLOR.creamMuted}>Result was appended above; native mouse scroll stays available.</Text>
           ) : null}
@@ -415,7 +430,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
                   </Text>
                 </Box>
                 <Text color={UI.muted} wrap="truncate-end">
-                  {middleTruncate(info.model, 18)} · {elapsed(info.startedAt)} · {info.steps} st ·{' '}
+                  {middleTruncate(info.model, 18)} · {elapsed(info.startedAt, info.endedAt)} · {info.steps} st ·{' '}
                   {Math.round((info.tokensIn + info.tokensOut) / 1000)}k ·{' '}
                   {info.ctxPct !== undefined ? (
                     <Text color={info.ctxPct >= 90 ? UI.danger : info.ctxPct >= 70 ? UI.warn : UI.muted}>

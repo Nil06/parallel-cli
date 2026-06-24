@@ -19,8 +19,8 @@ export function stateLabel(state: AgentState): string {
   return t(STATE_LABEL[state].labelKey);
 }
 
-export function elapsed(since: number): string {
-  const s = Math.floor((Date.now() - since) / 1000);
+export function elapsed(since: number, until = Date.now()): string {
+  const s = Math.max(0, Math.floor((until - since) / 1000));
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   return `${m}m${String(s % 60).padStart(2, '0')}s`;

@@ -33,7 +33,8 @@ export function cleanHubSummary(text: string): string {
 export function formatAgentTelemetry(agent: AgentInfo): string {
   const ctx = agent.ctxPct !== undefined ? ` · ${agent.ctxPct}% ctx` : '';
   const perf = agent.perf ? ` · ${agent.perf.modelTurns}t/${agent.perf.toolCalls} tools` : '';
-  return `${elapsed(agent.startedAt)}${ctx}${perf} · ${agent.cost === null ? '$-' : fmtCost(agent.cost)}`;
+  const runtime = agent.endedAt ? `ended ${elapsed(agent.startedAt, agent.endedAt)}` : elapsed(agent.startedAt);
+  return `${runtime}${ctx}${perf} · ${agent.cost === null ? '$-' : fmtCost(agent.cost)}`;
 }
 
 function firstSectionLine(text: string, labels: string[]): string | null {
@@ -119,14 +120,31 @@ export function modeBadge(mode: AgentInfo['mode']): { label: string; color: stri
   return { label: 'TASK', color: MODE.task };
 }
 
+export function hiddenProgressCount(agent: AgentInfo, max: number): number {
+  return Math.max(0, (agent.progressSteps?.length ?? 0) - max);
+}
+
 function agentDisplayName(agent: AgentInfo): string {
   return agent.alias && agent.alias !== agent.name ? `${agent.alias} ${agent.name}` : agent.alias || agent.name;
 }
 
-export function ProgressSteps({ agent, max = 4, cols = 100 }: { agent: AgentInfo; max?: number; cols?: number }) {
+export function ProgressSteps({
+  agent,
+  max = 4,
+  cols = 100,
+  showRemaining = false,
+}: {
+  agent: AgentInfo;
+  max?: number;
+  cols?: number;
+  showRemaining?: boolean;
+}) {
   const steps = agent.progressSteps?.slice(0, max) ?? [];
+  const total = agent.progressSteps?.length ?? 0;
   if (steps.length === 0) return null;
   const textMax = Math.max(20, cols - 8);
+  const remaining = hiddenProgressCount(agent, max);
+  const ref = agent.alias || agent.name;
   return (
     <Box flexDirection="column">
       {steps.map((step, i) => {
@@ -139,6 +157,11 @@ export function ProgressSteps({ agent, max = 4, cols = 100 }: { agent: AgentInfo
           </Text>
         );
       })}
+      {showRemaining && remaining > 0 ? (
+        <Text color={COLOR.creamMuted} wrap="truncate-end">
+          +{remaining} steps · full /focus {ref} · term /attach {ref}
+        </Text>
+      ) : null}
     </Box>
   );
 }
@@ -153,6 +176,7 @@ export function AgentRow({
   cols: number;
 }) {
   const meta = STATE_META[agent.state];
+  const terminal = agent.state === 'done' || agent.state === 'error' || agent.state === 'stopped';
 
   // ── State transition pulse (Phase 5) ──
   const prevState = useRef(agent.state);
@@ -171,7 +195,11 @@ export function AgentRow({
 
   const name = agentDisplayName(agent);
   const mode = modeBadge(agent.mode);
-  const quickActions = `full /focus ${agent.alias || agent.name} · term /attach ${agent.alias || agent.name}`;
+  const quickActions = terminal
+    ? agent.state === 'error'
+      ? `full /focus ${agent.alias || agent.name} · term /attach ${agent.alias || agent.name} · clear /clear`
+      : `full /focus ${agent.alias || agent.name} · term /attach ${agent.alias || agent.name}`
+    : `stop /stop ${agent.alias || agent.name} · full /focus ${agent.alias || agent.name} · term /attach ${agent.alias || agent.name}`;
   const actionBudget = Math.min(44, quickActions.length + 2);
   const taskMax = Math.max(10, cols - 18 - actionBudget);
   const line2Max = Math.max(10, cols - 2);
@@ -229,7 +257,7 @@ export function AgentRow({
           <Text color={UI.muted}>{telemetry}</Text>
         </Box>
       ) : null}
-      {!agent.lastResult ? <ProgressSteps agent={agent} max={3} cols={line2Max} /> : null}
+      {!agent.lastResult ? <ProgressSteps agent={agent} max={3} cols={line2Max} showRemaining /> : null}
     </Box>
   );
 }

@@ -167,7 +167,7 @@ Input has three explicit contexts:
 
 - Hub: plain text launches a new `/task` agent. Slash suggestions show hub commands and agent arguments autocomplete for `/focus`, `/send`, `/attach`, `/pause`, `/resume`, `/stop`, `/restore`, and `/commit`.
 - Focus: after `/focus a1`, plain text talks to the focused agent instead of spawning a new one. `/raw` affects this view only.
-- Attach: in `parallel attach a1`, the same minimal prompt UI steers the attached agent. `/task`, `/ask`, and `/plan` spawn new agents from that terminal, while `@all ...`, `@a2 ...`, and `/send ...` route instructions through the main session.
+- Attach: in `parallel attach a1`, the same minimal prompt UI steers the attached agent. `/stop` stops the attached agent, `/task`, `/ask`, and `/plan` spawn new agents from that terminal, while `@all ...`, `@a2 ...`, and `/send ...` route instructions through the main session.
 
 Use `Name: task` when naming an agent:
 
@@ -237,6 +237,7 @@ plain text sends a message to this agent
 /ask Reviewer: is this result safe to merge?
 /plan Migration: prepare a migration plan
 /review all before commit
+/stop
 /raw
 /quit
 ```

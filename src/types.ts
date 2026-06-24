@@ -26,6 +26,8 @@ export interface AgentInfo {
   /** Accumulated cost in USD — null when no pricing is known for the model. */
   cost: number | null;
   startedAt: number;
+  /** Set once when the agent reaches done/error/stopped so elapsed time stops moving. */
+  endedAt?: number;
   lastResult?: string;
   /** Specialist persona used to spawn this agent, if any. */
   specialist?: string;
@@ -199,6 +201,7 @@ export interface SessionData {
     tokensIn?: number;
     tokensOut?: number;
     cost?: number | null;
+    endedAt?: number;
     providerName?: string;
     model?: string;
     specialist?: string;

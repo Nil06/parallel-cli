@@ -2,6 +2,20 @@
 
 All notable changes to Parallel are documented here.
 
+## 0.4.8 - 2026-06-24
+
+### 0.4.8 Changed
+
+- Added clearer attached-terminal control with `/stop`, visible stop hints for active agents, and command palette support in attached terminals.
+- Made hidden Hub progress explicit by showing `+N steps` with direct `full /focus aN` and `term /attach aN` shortcuts when rows are truncated.
+- Froze elapsed-time telemetry once agents reach `done`, `error`, or `stopped` so finished agents no longer keep counting.
+
+### 0.4.8 Fixed
+
+- Fixed OpenAI-compatible `tool_calls` history failures by recording assistant tool calls and all matching tool results atomically, even when a task completes early or an agent is stopped.
+- Repaired restored conversations with missing tool results before the next model call to prevent 400 errors after interrupted runs.
+- Restored a bounded live activity timeline in attached terminals while preserving append-only native scrollback for final results.
+
 ## 0.4.7 - 2026-06-24
 
 ### 0.4.7 Added

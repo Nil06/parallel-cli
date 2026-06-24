@@ -70,7 +70,12 @@ export class Blackboard extends EventEmitter {
     a.state = state;
     if (action !== undefined) a.currentAction = action;
     // A finished agent no longer holds any declared work area.
-    if (state === 'done' || state === 'stopped' || state === 'error') a.claims = undefined;
+    if (state === 'done' || state === 'stopped' || state === 'error') {
+      a.claims = undefined;
+      if (!a.endedAt) a.endedAt = Date.now();
+    } else {
+      a.endedAt = undefined;
+    }
     if (prev !== state) this.emit('agent-event', { type: 'state', id, state, prev });
     this.touch();
   }

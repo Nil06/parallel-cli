@@ -1,6 +1,6 @@
 {
   "name": "@parallel-cli/parallel",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Real-time coding agents that work like a live team on one shared repository.",
   "keywords": [
     "cli",

@@ -63,7 +63,7 @@ export function bestCommandCompletion(value: string): string | null {
 
 export function commandNamesForContext(context: InputContext): string[] | undefined {
   if (context !== 'attach') return undefined;
-  return ['/ask', '/a', '/task', '/t', '/plan', '/p', '/review', '/send', '/raw', '/quit', '/exit', '/detach'];
+  return ['/ask', '/a', '/task', '/t', '/plan', '/p', '/review', '/send', '/stop', '/raw', '/quit', '/exit', '/detach'];
 }
 
 export function agentArgCommand(value: string): string | null {

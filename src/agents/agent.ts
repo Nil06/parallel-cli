@@ -300,6 +300,38 @@ export class Agent {
     }
   }
 
+  private repairToolCallHistory(): void {
+    const repaired: ChatCompletionMessageParam[] = [];
+    for (let i = 0; i < this.history.length; i++) {
+      const msg = this.history[i] as any;
+      if (msg.role === 'tool') {
+        // Orphan tool messages make OpenAI-compatible APIs reject the whole
+        // request. Valid tool messages are consumed immediately after their
+        // assistant tool_calls block below.
+        continue;
+      }
+      repaired.push(this.history[i]);
+      const toolCalls = msg.role === 'assistant' && Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+      if (toolCalls.length === 0) continue;
+      const seen = new Set<string>();
+      while (i + 1 < this.history.length && (this.history[i + 1] as any).role === 'tool') {
+        const toolMsg = this.history[++i] as any;
+        if (toolMsg.tool_call_id) seen.add(String(toolMsg.tool_call_id));
+        repaired.push(toolMsg as ChatCompletionMessageParam);
+      }
+      for (const tc of toolCalls) {
+        const id = String(tc.id ?? '');
+        if (!id || seen.has(id)) continue;
+        repaired.push({
+          role: 'tool',
+          tool_call_id: id,
+          content: 'Skipped: missing tool result repaired before the next model call.',
+        } as ChatCompletionMessageParam);
+      }
+    }
+    this.history = repaired;
+  }
+
   private updatePerf(delta: Partial<AgentPerf>): void {
     const current = this.board.agents.get(this.id)?.perf ?? EMPTY_PERF;
     this.board.updateAgent(this.id, {
@@ -430,6 +462,7 @@ export class Agent {
           await new Promise((r) => setTimeout(r, 600));
           if (this.stopped) break;
         }
+        this.repairToolCallHistory();
         const messages: ChatCompletionMessageParam[] = [
           ...this.history,
           { role: 'user', content: live.text },
@@ -475,9 +508,6 @@ export class Agent {
         }
 
         const msg = res.message;
-        // Persist this round into history (live context is NOT kept — rebuilt fresh each turn).
-        this.record({ role: 'user', content: '[real-time state consulted]' });
-        this.record(msg as ChatCompletionMessageParam);
 
         if (msg.content && msg.content.trim()) {
           // "✻" marks thinking/commentary steps — visually distinct from tool lines.
@@ -486,6 +516,9 @@ export class Agent {
 
         const toolCalls = msg.tool_calls ?? [];
         if (toolCalls.length === 0) {
+          // Persist this round into history (live context is NOT kept — rebuilt fresh each turn).
+          this.record({ role: 'user', content: '[real-time state consulted]' });
+          this.record(msg as ChatCompletionMessageParam);
           this.record({
             role: 'user',
             content:
@@ -496,18 +529,31 @@ export class Agent {
 
         this.board.setAgentState(this.id, 'working');
         let completed = false;
-        for (const tc of toolCalls) {
-          if (this.stopped) break;
-          if (tc.type !== 'function') continue;
+        const toolResults: ChatCompletionMessageParam[] = [];
+        const postToolMessages: ChatCompletionMessageParam[] = [];
+        const addToolResult = (toolCallId: string, content: string): void => {
+          toolResults.push({ role: 'tool', tool_call_id: toolCallId, content } as ChatCompletionMessageParam);
+        };
+        const addSkippedToolResults = (startIndex: number, content: string): void => {
+          for (const remaining of toolCalls.slice(startIndex)) {
+            if (remaining.id) addToolResult(remaining.id, content);
+          }
+        };
+        for (let i = 0; i < toolCalls.length; i++) {
+          const tc = toolCalls[i];
+          if (this.stopped) {
+            addSkippedToolResults(i, 'Skipped: the agent was stopped before this tool call executed.');
+            break;
+          }
+          if (tc.type !== 'function') {
+            addToolResult(tc.id, 'ERROR: unsupported tool call type.');
+            continue;
+          }
           let args: any = {};
           try {
             args = tc.function.arguments ? JSON.parse(tc.function.arguments) : {};
           } catch {
-            this.record({
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: 'ERROR: invalid JSON arguments.',
-            });
+            addToolResult(tc.id, 'ERROR: invalid JSON arguments.');
             continue;
           }
           const label = this.describeCall(tc.function.name, args);
@@ -520,7 +566,12 @@ export class Agent {
           this.board.updateAgent(this.id, { currentAction: label.slice(0, 80) });
 
           const shellStartedAt = tc.function.name === 'run_command' ? Date.now() : 0;
-          const result = await this.executor.execute(tc.function.name, args);
+          let result: string;
+          try {
+            result = await this.executor.execute(tc.function.name, args);
+          } catch (err: any) {
+            result = `ERROR: ${err?.message ?? String(err)}`;
+          }
           const shellMs = shellStartedAt ? Date.now() - shellStartedAt : 0;
           const readOnlyShell = tc.function.name === 'run_command' && isReadOnlyShell(String(args.command ?? ''));
           this.updatePerf({
@@ -532,7 +583,7 @@ export class Agent {
           if (readOnlyShell) {
             this.readOnlyShellStreak++;
             if (this.readOnlyShellStreak >= 3) {
-              this.record({
+              postToolMessages.push({
                 role: 'user',
                 content:
                   '[PERFORMANCE CORRECTION] You are using several read-only shell micro-commands. Batch the next inspection with read_many/inspect_project or a single labelled shell command, then continue.',
@@ -559,11 +610,20 @@ export class Agent {
             // is rendered as the agent's recap) — no duplicated walls of text.
             const headline = summary.split('\n').find((l) => l.trim())?.trim() ?? 'Task complete.';
             this.board.addNote(this.name, 'all', `✅ ${headline.slice(0, 160)}`);
-            this.record({ role: 'tool', tool_call_id: tc.id, content: 'OK, task closed.' });
+            addToolResult(tc.id, 'OK, task closed.');
+            addSkippedToolResults(i + 1, 'Skipped: task_complete closed the task before this tool call executed.');
             break;
           }
-          this.record({ role: 'tool', tool_call_id: tc.id, content: result });
+          addToolResult(tc.id, result);
         }
+
+        // OpenAI-compatible APIs require assistant tool_calls to be followed
+        // immediately by one tool result per tool_call_id. Keep this block
+        // atomic so aborted/skipped tools never poison a later turn or restore.
+        this.record({ role: 'user', content: '[real-time state consulted]' });
+        this.record(msg as ChatCompletionMessageParam);
+        for (const toolResult of toolResults) this.record(toolResult);
+        for (const postToolMessage of postToolMessages) this.record(postToolMessage);
 
         if (completed) {
           this.board.setAgentState(this.id, 'done', 'done ✅');

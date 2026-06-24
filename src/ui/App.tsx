@@ -1141,7 +1141,9 @@ function AgentHub({
       }
       const needsSeparator = rows.length > 0;
       const summaryLines = agent.lastResult ? Math.min(4, Math.max(1, agent.lastResult.split('\n').filter((l) => l.trim()).length)) : 0;
-      const stepLines = !agent.lastResult && agent.progressSteps && agent.progressSteps.length > 0 ? Math.min(3, agent.progressSteps.length) : 0;
+      const stepLines = !agent.lastResult && agent.progressSteps && agent.progressSteps.length > 0
+        ? Math.min(3, agent.progressSteps.length) + (agent.progressSteps.length > 3 ? 1 : 0)
+        : 0;
       const agentLines = 1 + Math.max(summaryLines, agent.currentAction || agent.claims?.length ? 1 : 0) + stepLines;
       const neededLines = agentLines + (needsSeparator ? 1 : 0);
       if (renderedLines + neededLines > visibleRows) {

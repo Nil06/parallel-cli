@@ -112,6 +112,7 @@ const COMMAND_PALETTE_PRIORITY = [
   '/send',
   '/focus',
   '/attach',
+  '/stop',
   '/agents',
   '/board',
   '/diff',
