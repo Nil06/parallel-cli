@@ -19,13 +19,14 @@ Parallel lets you run several AI coding agents on the same repository at the sam
 - Use context-aware input in the hub, focus view, and attached agent terminals.
 - Steer one agent with `@a1 ...` or broadcast with `@all ...`.
 - Open dedicated agent terminals with native scrollback.
-- See a richer live hub with latest agent signals, mode badges, context usage, and responsive timelines.
+- Use a cleaner Codex-like hub with a framed header, focused prompt bar, and quieter empty state.
 - Review agents, notes, file activity, diffs, cost, skills, specialists, and saved sessions from the TUI.
 - Track shell-created file mutations in the same live diff feed as agent edits.
 - Configure OpenAI-compatible providers through a guided wizard and settings panel.
 - Use 29 provider presets across Western, Chinese, Gateway, Inference, and Local categories.
 - Support local no-key endpoints such as Ollama and vLLM/SGLang.
 - Keep shell execution controlled with `ask`, `auto-safe`, or `yolo` approvals.
+- Get prompted for npm updates at startup, with an explicit skip path.
 - Save and restore project sessions.
 - Run headless multi-agent jobs for CI or scripts.
 
@@ -117,7 +118,9 @@ Plain text is equivalent to `/task`.
 
 ## Control Room
 
-The main TUI is the Parallel hub. It is designed to answer:
+The main TUI is the Parallel hub. The default view stays intentionally quiet: a Codex-like framed header, cream-toned accents, a focused prompt block, and detailed status moved into explicit views.
+
+It is designed to answer:
 
 - what needs your input
 - which agents are working
@@ -129,7 +132,7 @@ Input has three explicit contexts:
 
 - Hub: plain text launches a new `/task` agent. Slash suggestions show hub commands and agent arguments autocomplete for `/focus`, `/send`, `/attach`, `/pause`, `/resume`, `/stop`, `/restore`, and `/commit`.
 - Focus: after `/focus a1`, plain text talks to the focused agent instead of spawning a new one. `/raw` affects this view only.
-- Attach: in `parallel attach a1`, plain text steers the attached agent. `/task`, `/ask`, and `/plan` spawn new agents from that terminal, while `@all ...`, `@a2 ...`, and `/send ...` route instructions through the main session.
+- Attach: in `parallel attach a1`, the same minimal prompt UI steers the attached agent. `/task`, `/ask`, and `/plan` spawn new agents from that terminal, while `@all ...`, `@a2 ...`, and `/send ...` route instructions through the main session.
 
 Use `Name: task` when naming an agent:
 
@@ -157,9 +160,11 @@ Commands are typed in the control room input. When a long view is open, use Esca
 Keyboard behavior:
 
 - `/` opens slash command suggestions.
-- Up/Down selects suggestions when a suggestion menu is open.
+- Up/Down selects suggestions in the same order they appear.
 - Enter accepts the selected suggestion.
 - Tab or Right accepts the best completion.
+- `/help` is keyboard navigable: Up/Down moves the visible selection, PgUp/PgDn pages, and Enter runs the selected command.
+- Wizard, settings, slash suggestions, and help views use clamped keyboard selection so the highlight does not jump, disappear, or wrap unexpectedly.
 - PgUp/PgDn scrolls the hub or focus view even while the input is active. Up/Down scrolls long views and navigates suggestions/history.
 - Escape returns to the agents view or clears the input.
 
@@ -239,6 +244,19 @@ Environment variables:
 - `PARALLEL_BASE_URL`: override the default provider base URL.
 - `PARALLEL_MODEL`: override the session model.
 - `PARALLEL_NO_ALT_SCREEN=1`: disable the alternate terminal screen.
+- `PARALLEL_SKIP_UPDATE_CHECK=1`: disable npm update checks.
+
+## Updates
+
+On interactive startup, Parallel checks npm at most once per day for a newer `@parallel-cli/parallel` version. The check is skipped in `attach`, `--headless`, `--first-run`, CI, non-TTY sessions, or when `PARALLEL_SKIP_UPDATE_CHECK=1` is set.
+
+When an update is available, Parallel asks before running:
+
+```bash
+npm install -g @parallel-cli/parallel
+```
+
+If the update succeeds, restart Parallel to run the new version. Use `parallel --no-update` for a one-off launch without checking.
 
 ## Commands
 

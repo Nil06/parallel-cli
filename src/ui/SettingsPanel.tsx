@@ -7,6 +7,7 @@ import { SelectList as BaseSelectList, type SelectItem } from './Wizard.js';
 import { LANGS, getLang, setLang, t } from '../i18n.js';
 import { detectProviderModels, isLocalProvider, isPlaceholderModel, providerNeedsApiKey, PROVIDER_PRESETS } from '../config.js';
 import type { Lang, ProviderConfig, ShellApprovalMode } from '../types.js';
+import { BRAND } from './tokens.js';
 
 type Step =
   | { id: 'root' }
@@ -190,8 +191,8 @@ export function SettingsPanel({
   // ---- render ----
 
   return (
-    <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={1}>
-      <Text bold color="cyan">
+    <Box borderStyle="round" borderColor={BRAND.muted} flexDirection="column" paddingX={1}>
+      <Text bold color={BRAND.primary}>
         {scope === 'global' ? t('set.title') : t('sset.title')}
       </Text>
       {flash ? <Text color="green">{flash}</Text> : null}

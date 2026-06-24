@@ -9,9 +9,15 @@ export const MARK = {
   arrow: '▸',
 };
 
+export const COLOR = {
+  cream: '#f3e7c7',
+  creamMuted: '#c8bfa6',
+  promptBackground: '#5f5963',
+} as const;
+
 export const UI = {
-  brand: 'cyanBright',
-  accent: 'cyan',
+  brand: COLOR.cream,
+  accent: COLOR.cream,
   muted: 'gray',
   text: 'white',
   ok: 'greenBright',
@@ -36,13 +42,13 @@ export const STATE_META: Record<AgentState, { mark: string; label: string; color
 
 /** Brand colors — logotype, borders, focus indicator. */
 export const BRAND = {
-  primary: 'cyanBright',
-  muted: 'cyan',
+  primary: COLOR.cream,
+  muted: COLOR.creamMuted,
 } as const;
 
 /** Semantic state colors mapped to agent states. */
 export const STATE = {
-  working: 'cyan',
+  working: COLOR.cream,
   thinking: 'yellow',
   listening: 'yellow',
   done: 'greenBright',
@@ -54,7 +60,7 @@ export const STATE = {
 /** Mode indicator colors. `task` is undefined — it renders no mark. */
 export const MODE = {
   ask: 'yellow',
-  plan: 'blue',
+  plan: COLOR.creamMuted,
   task: undefined,
 } as const;
 

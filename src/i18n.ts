@@ -88,6 +88,10 @@ const en: Record<string, string> = {
   'main.ready2': 'Type a task + Enter to launch your first agent. /help for help.',
   'main.empty':
     'No agents yet. Type a task + Enter to launch your first agent — then launch more at any time, even while they work.',
+  'main.prompt': 'Example: Redesign the UI',
+  'main.emptyCard.tagline': 'Multi-agent coding from one terminal.',
+  'main.emptyCard.cta': 'Describe work below to launch the first agent.',
+  'main.emptyCard.hints': '/ for commands · @agent to steer · /help for shortcuts',
   'main.status':
     'Enter = new agent N+1 (even while others work) · @Name = real-time instruction · /help · views: /agents /board /diff /notes',
   'main.placeholder': 'Type a task (= new agent N+1) · @Agent message · /command',
@@ -471,6 +475,10 @@ const fr: Record<string, string> = {
   'main.ready2': "Tape une tâche + Entrée pour lancer ton premier agent. /help pour l'aide.",
   'main.empty':
     "Aucun agent pour le moment. Tape une tâche + Entrée pour lancer ton premier agent — puis relances-en d'autres à tout moment, même pendant qu'ils travaillent.",
+  'main.prompt': 'Exemple : Fais moi une refonte UI',
+  'main.emptyCard.tagline': 'Code multi-agent depuis un terminal.',
+  'main.emptyCard.cta': 'Décris le travail ci-dessous pour lancer le premier agent.',
+  'main.emptyCard.hints': '/ pour les commandes · @agent pour piloter · /help pour les raccourcis',
   'main.status':
     'Entrée = nouvel agent N+1 (même pendant que les autres travaillent) · @Nom = instruction temps réel · /help · vues : /agents /board /diff /notes',
   'main.placeholder': 'Tape une tâche (= nouvel agent N+1) · @Agent message · /commande',
@@ -842,6 +850,10 @@ const es: Record<string, string> = {
   'main.ready2': 'Escribe una tarea + Enter para lanzar tu primer agente. /help para ayuda.',
   'main.empty':
     'Aún no hay agentes. Escribe una tarea + Enter para lanzar tu primer agente — luego lanza más en cualquier momento, incluso mientras trabajan.',
+  'main.prompt': 'Ejemplo: hazme un rediseño de UI',
+  'main.emptyCard.tagline': 'Código multiagente desde un terminal.',
+  'main.emptyCard.cta': 'Describe el trabajo abajo para lanzar el primer agente.',
+  'main.emptyCard.hints': '/ para comandos · @agente para dirigir · /help para atajos',
   'main.status':
     'Enter = nuevo agente N+1 (incluso mientras otros trabajan) · @Nombre = instrucción en tiempo real · /help · vistas: /agents /board /diff /notes',
   'main.placeholder': 'Escribe una tarea (= nuevo agente N+1) · @Agente mensaje · /comando',
@@ -1212,6 +1224,10 @@ const zh: Record<string, string> = {
   'main.ready1': '⚡ 就绪 — 文件夹：{folder}',
   'main.ready2': '输入任务 + 回车即可启动第一个智能体。/help 查看帮助。',
   'main.empty': '尚无智能体。输入任务 + 回车启动第一个 — 之后可随时启动更多，即使它们正在工作。',
+  'main.prompt': '示例：帮我重做 UI',
+  'main.emptyCard.tagline': '在一个终端中进行多智能体编码。',
+  'main.emptyCard.cta': '在下方描述工作以启动第一个智能体。',
+  'main.emptyCard.hints': '/ 查看命令 · @智能体 可指挥 · /help 查看快捷键',
   'main.status':
     '回车 = 新智能体 N+1（即使其他智能体正在工作）· @名称 = 实时指令 · /help · 视图：/agents /board /diff /notes',
   'main.placeholder': '输入任务（= 新智能体 N+1）· @智能体 消息 · /命令',

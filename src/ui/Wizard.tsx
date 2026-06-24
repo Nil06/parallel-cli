@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { t } from '../i18n.js';
+import { BRAND, COLOR } from './tokens.js';
+
+function clampIndex(index: number, count: number): number {
+  if (count <= 0) return 0;
+  return Math.max(0, Math.min(index, count - 1));
+}
 
 export interface SelectItem {
   label: string;
@@ -64,11 +70,11 @@ export function SelectList({
       return;
     }
     if (key.upArrow) {
-      if (!typing) setIdx((i) => (i - 1 + selectable.length) % Math.max(1, selectable.length));
+      if (!typing) setIdx((i) => clampIndex(i - 1, selectable.length));
       return;
     }
     if (key.downArrow) {
-      if (!typing) setIdx((i) => (i + 1) % Math.max(1, selectable.length));
+      if (!typing) setIdx((i) => clampIndex(i + 1, selectable.length));
       return;
     }
     if (key.pageUp) {
@@ -124,7 +130,7 @@ export function SelectList({
           </Box>
         ) : (
           <Text key={it.value + i}>
-            <Text color={!typing && i === safeIdx ? 'cyanBright' : 'gray'} bold={!typing && i === safeIdx}>
+            <Text color={!typing && i === safeIdx ? COLOR.cream : 'gray'} bold={!typing && i === safeIdx}>
               {!typing && i === safeIdx ? '❯ ' : '  '}
               {it.label}
             </Text>
@@ -137,14 +143,14 @@ export function SelectList({
       {below > 0 ? <Text color="gray">▼ {below}</Text> : null}
       {allowInput && (
         <Box marginTop={items.length > 0 ? 1 : 0}>
-          <Text color={typing ? 'cyanBright' : 'gray'}>
+          <Text color={typing ? COLOR.cream : 'gray'}>
             ✎{' '}
             {typing ? (
               <Text color="white">{mask ? '•'.repeat(typed.length) : typed}</Text>
             ) : (
               <Text color="gray">{inputPlaceholder ?? '…'}</Text>
             )}
-            {typing ? <Text color="cyanBright">█</Text> : null}
+            {typing ? <Text color={COLOR.cream}>█</Text> : null}
           </Text>
         </Box>
       )}
@@ -166,8 +172,8 @@ export function WizardStep({
   footer?: string;
 }) {
   return (
-    <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={1}>
-      <Text bold color="cyan">
+    <Box borderStyle="round" borderColor={BRAND.muted} flexDirection="column" paddingX={1}>
+      <Text bold color={BRAND.primary}>
         [{step}/{total}] {title}
       </Text>
       <Box flexDirection="column" marginTop={1}>

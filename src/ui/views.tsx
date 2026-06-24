@@ -1,13 +1,35 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
 import * as Diff from 'diff';
 import { Blackboard } from '../coordination/blackboard.js';
-import { visibleCommands } from '../commands.js';
+import { sortCommandsForPalette, visibleCommands } from '../commands.js';
 import { Controller } from '../controller.js';
 import { fmtCost } from '../pricing.js';
 import { STATE_LABEL, stateLabel, truncate } from './theme.js';
 import { t } from '../i18n.js';
 import type { Skill, Specialist } from '../types.js';
+import { BRAND, COLOR } from './tokens.js';
+
+function clampIndex(index: number, count: number): number {
+  if (count <= 0) return 0;
+  return Math.max(0, Math.min(index, count - 1));
+}
+
+function useSelectableIndex(count: number, pageSize: number) {
+  const [selected, setSelected] = useState(0);
+  const safeSelected = clampIndex(selected, count);
+  useEffect(() => {
+    if (safeSelected !== selected) setSelected(safeSelected);
+  }, [safeSelected, selected]);
+  const step = Math.max(1, pageSize - 1);
+  useInput((_input, key) => {
+    if (key.downArrow) setSelected((i) => clampIndex(i + 1, count));
+    if (key.upArrow) setSelected((i) => clampIndex(i - 1, count));
+    if (key.pageDown) setSelected((i) => clampIndex(i + step, count));
+    if (key.pageUp) setSelected((i) => clampIndex(i - step, count));
+  });
+  return safeSelected;
+}
 
 /**
  * PgUp/PgDn window over a list — the TUI runs in the alternate screen, so
@@ -176,7 +198,7 @@ export function DiffView({ board, bodyHeight }: { board: Blackboard; bodyHeight?
           return (
             <Box key={c.id} flexDirection="column" marginTop={1}>
               <Text bold>
-                <Text color="cyan">{c.path}</Text>
+                <Text color={BRAND.primary}>{c.path}</Text>
                 <Text color="gray">
                   {' '}
                   {t('diff.by', { agent: c.agentName, time: new Date(c.ts).toLocaleTimeString() })}
@@ -185,7 +207,7 @@ export function DiffView({ board, bodyHeight }: { board: Blackboard; bodyHeight?
               {lines.map((l, i) => (
                 <Text
                   key={i}
-                  color={l.startsWith('+') ? 'green' : l.startsWith('-') ? 'red' : l.startsWith('@') ? 'cyan' : 'gray'}
+                  color={l.startsWith('+') ? 'green' : l.startsWith('-') ? 'red' : l.startsWith('@') ? BRAND.primary : 'gray'}
                   wrap="truncate-end"
                 >
                   {l || ' '}
@@ -228,7 +250,7 @@ export function CostView({ board, bodyHeight }: { board: Blackboard; bodyHeight?
               </Text>
               <Text color="gray">{a.model.padEnd(24).slice(0, 24)} </Text>
               <Text>{String(a.steps).padStart(3)} steps </Text>
-              <Text color="cyan">
+              <Text color={BRAND.primary}>
                 {String(Math.round(a.tokensIn / 1000)).padStart(5)}k in {String(Math.round(a.tokensOut / 1000)).padStart(4)}k out{' '}
               </Text>
               <Text color="greenBright" bold>
@@ -257,8 +279,8 @@ export function SkillsView({ skills, bodyHeight }: { skills: Skill[]; bodyHeight
   const visible = bodyHeight ? Math.max(3, bodyHeight - 6) : fallbackVisible;
   const { slice, above, below } = useScrollWindow(skills, visible, 'top');
   return (
-    <Box borderStyle="round" borderColor="blueBright" flexDirection="column" paddingX={1}>
-      <Text bold color="blueBright">
+    <Box borderStyle="round" borderColor={BRAND.muted} flexDirection="column" paddingX={1}>
+      <Text bold color={BRAND.primary}>
         {t('skills.title')}
       </Text>
       {skills.length === 0 ? (
@@ -269,7 +291,7 @@ export function SkillsView({ skills, bodyHeight }: { skills: Skill[]; bodyHeight
         {slice.map((s) => (
           <Text key={s.file} wrap="truncate-end">
             {'  '}
-            <Text color="blueBright" bold>
+            <Text color={BRAND.primary} bold>
               #{s.name.padEnd(16)}
             </Text>
             <Text color={s.scope === 'global' ? 'yellow' : 'green'}>[{s.scope}] </Text>
@@ -308,7 +330,7 @@ export function SpecialistsView({ specialists, bodyHeight }: { specialists: Spec
               🎓{s.name.padEnd(16)}
             </Text>
             <Text color={s.scope === 'global' ? 'yellow' : 'green'}>[{s.scope}] </Text>
-            {s.model ? <Text color="cyan">{s.model} </Text> : null}
+            {s.model ? <Text color={BRAND.primary}>{s.model} </Text> : null}
             <Text color="gray">{truncate(s.description || s.file, 90)}</Text>
           </Text>
         ))}
@@ -363,20 +385,27 @@ export function SessionsView({ projectRoot, bodyHeight }: { projectRoot: string;
   );
 }
 
-export function HelpView({ bodyHeight }: { bodyHeight?: number }) {
+export function HelpView({ bodyHeight, onSelect }: { bodyHeight?: number; onSelect?: (command: string) => void }) {
   // Fixed intro/highlight/footer rows consume about 12 lines inside the already-sized body.
   const fallbackVisible = useVisibleRows(16);
   const visible = bodyHeight ? Math.max(3, bodyHeight - 12) : fallbackVisible;
-  const commands = visibleCommands();
-  const { slice, above, below } = useScrollWindow(commands, visible, 'top');
+  const commands = sortCommandsForPalette(visibleCommands());
+  const selected = useSelectableIndex(commands.length, visible);
+  useInput((_input, key) => {
+    if (key.return) onSelect?.(commands[selected]?.name ?? '/help');
+  });
+  const start = Math.min(Math.max(0, selected - Math.floor(visible / 2)), Math.max(0, commands.length - visible));
+  const slice = commands.slice(start, start + visible);
+  const above = start;
+  const below = Math.max(0, commands.length - start - slice.length);
   const highlights: Array<[string, string[]]> = [
     ['Agent modes', ['/ask', '/task', '/plan']],
     ['Shell approvals', ['/approvals ask', '/approvals auto', '/approvals yolo']],
     ['Navigation', ['/focus', '/attach', '/raw', '/send']],
   ];
   return (
-    <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={1}>
-      <Text bold color="cyan">
+    <Box borderStyle="round" borderColor={BRAND.muted} flexDirection="column" paddingX={1}>
+      <Text bold color={BRAND.primary}>
         {t('help.title')}
       </Text>
       <Text wrap="truncate-end">
@@ -394,17 +423,20 @@ export function HelpView({ bodyHeight }: { bodyHeight?: number }) {
       <Text> </Text>
       {highlights.map(([label, names]) => (
         <Text key={label} wrap="truncate-end">
-          <Text color="cyan" bold>{label}: </Text>
+          <Text color={BRAND.primary} bold>{label}: </Text>
           <Text color="gray">{names.join('  ')}</Text>
         </Text>
       ))}
-      <Text color="gray" wrap="truncate-end">Keyboard: ↑/↓ or PgUp/PgDn scroll · Tab/→ autocomplete · Esc back/clear · Ctrl+U clear · Ctrl+V image</Text>
+      <Text color="gray" wrap="truncate-end">Keyboard: ↑/↓ select · Enter run selected · PgUp/PgDn page · Esc back</Text>
       <Text> </Text>
       <Above n={above} />
-      {slice.map((c) => (
+      {slice.map((c, i) => {
+        const isSelected = start + i === selected;
+        return (
         <Text key={c.name} wrap="truncate-end">
-          <Text color="cyan" bold>
-            {c.name.padEnd(18)}
+          <Text color={isSelected ? COLOR.cream : COLOR.creamMuted} bold>
+            {isSelected ? '› ' : '  '}
+            {c.name.padEnd(16)}
           </Text>
           <Text color="yellow">{c.args.padEnd(24)}</Text>
           <Text color="gray">
@@ -412,7 +444,8 @@ export function HelpView({ bodyHeight }: { bodyHeight?: number }) {
             {c.aliases?.length ? ` (= ${c.aliases.join(', ')})` : ''}
           </Text>
         </Text>
-      ))}
+        );
+      })}
       <Below n={below} />
       <Text> </Text>
       <Text color="gray" wrap="truncate-end">{t('help.states')}</Text>

@@ -12,7 +12,7 @@ import { Timeline } from './Timeline.js';
 import { stateLabel, elapsed, truncate } from './theme.js';
 import { fmtCost } from '../pricing.js';
 import { t } from '../i18n.js';
-import { STATE_META, UI, middleTruncate } from './tokens.js';
+import { COLOR, STATE_META, UI, middleTruncate } from './tokens.js';
 
 /**
  * `parallel attach <agent>` — one DEDICATED terminal per agent.
@@ -349,11 +349,12 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
           (n): n is string => Boolean(n),
         )}
         agents={info ? [info] : []}
+        width={process.stdout.columns || 100}
         onSubmit={send}
         onEscape={() => exit()}
       />
-      <Box marginTop={1} marginBottom={1}>
-        <Text color="yellowBright" wrap="truncate-end">
+      <Box marginBottom={1}>
+        <Text color={COLOR.creamMuted} wrap="truncate-end">
           {formatAttachFooter(info)}
         </Text>
       </Box>

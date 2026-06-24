@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { matchCommands, type CommandDef } from '../commands.js';
+import { commandPalette } from '../commands.js';
 import { t } from '../i18n.js';
 import type { AgentInfo } from '../types.js';
 import { readClipboardImage } from './clipboard.js';
+import { BRAND, COLOR } from './tokens.js';
 
 export type InputContext = 'hub' | 'focus' | 'attach';
 
@@ -21,6 +22,8 @@ interface Props {
   commandNames?: string[];
   agentNames?: string[];
   agents?: AgentInfo[];
+  width?: number;
+  onHeightChange?: (rows: number) => void;
   onSubmit: (value: string, images?: string[]) => void;
   onEscape?: () => void;
   notify?: (line: string) => void;
@@ -29,23 +32,16 @@ interface Props {
 /** A paste is "long" when it spans multiple lines — it then collapses into a chip. */
 const PASTE_MIN_LINES = 2;
 
-const GROUP_LABEL: Record<string, string> = {
-  modes: 'Agent modes',
-  control: 'Control',
-  views: 'Views',
-  settings: 'Settings',
-  git: 'Git/session',
-  other: 'Other',
-};
-
 const AGENT_ARG_COMMANDS = new Set(['/focus', '/send', '/attach', '/pause', '/resume', '/stop', '/restore', '/commit']);
+const COMMAND_PAGE_SIZE = 9;
+const PROMPT_GUTTER = '› ';
 
 function modeHint(value: string, context: InputContext, targetAgent?: string): string {
   const v = value.trimStart().toLowerCase();
   if (!v) {
-    if (context === 'focus') return `Message ${targetAgent ?? 'focused agent'} · / for hub commands · PgUp/PgDn scroll`;
-    if (context === 'attach') return `Steer ${targetAgent ?? 'agent'} · /task spawns · @all broadcasts · /quit detaches`;
-    return 'Default /task · Tab/→ autocomplete · / for commands';
+    if (context === 'focus') return `Message ${targetAgent ?? 'focused agent'} · / commands`;
+    if (context === 'attach') return `Steer ${targetAgent ?? 'agent'} · @all broadcasts · /quit detaches`;
+    return 'Type a task or / for commands';
   }
   if (!v.startsWith('/')) {
     if (context === 'focus') return `Will message ${targetAgent ?? 'focused agent'}`;
@@ -55,18 +51,11 @@ function modeHint(value: string, context: InputContext, targetAgent?: string): s
   if (v.startsWith('/ask') || v === '/a') return 'Ask mode · advice only · no edits';
   if (v.startsWith('/task') || v === '/t') return 'Task mode · execute, edit, validate';
   if (v.startsWith('/plan') || v === '/p') return 'Plan mode · asks before editing';
-  return 'Tab/→ accepts the best suggestion';
-}
-
-function groupedCommands(commands: CommandDef[]): Array<[string, CommandDef[]]> {
-  const order = ['modes', 'control', 'views', 'settings', 'git', 'other'];
-  return order
-    .map((g) => [g, commands.filter((c) => (c.group ?? 'other') === g)] as [string, CommandDef[]])
-    .filter(([, items]) => items.length > 0);
+  return '↑/↓ select · Enter accept';
 }
 
 export function bestCommandCompletion(value: string): string | null {
-  const cmd = matchCommands(value)[0];
+  const cmd = commandPalette(value)[0];
   return cmd ? `${cmd.name} ` : null;
 }
 
@@ -88,6 +77,29 @@ export function completeAgentArgument(value: string, agent: string): string {
   return `${cmd} ${agent} `;
 }
 
+export function clampSuggestionIndex(index: number, count: number): number {
+  if (count <= 0) return 0;
+  return Math.max(0, Math.min(index, count - 1));
+}
+
+export function wrappedPromptLines(text: string, width: number): string[] {
+  const usable = Math.max(8, width - PROMPT_GUTTER.length);
+  if (!text) return [''];
+  const lines: string[] = [];
+  for (const logical of text.split('\n')) {
+    if (!logical) {
+      lines.push('');
+      continue;
+    }
+    for (let i = 0; i < logical.length; i += usable) lines.push(logical.slice(i, i + usable));
+  }
+  return lines.length > 0 ? lines : [''];
+}
+
+function paintLine(text: string, width: number): string {
+  return text.length >= width ? text.slice(0, width) : text.padEnd(width, ' ');
+}
+
 export function CommandInput({
   active,
   placeholder,
@@ -98,6 +110,8 @@ export function CommandInput({
   commandNames,
   agentNames = [],
   agents = [],
+  width,
+  onHeightChange,
   onSubmit,
   onEscape,
   notify,
@@ -107,6 +121,7 @@ export function CommandInput({
   const [history, setHistory] = useState<string[]>([]);
   const [histIdx, setHistIdx] = useState(-1);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
+  const [cursorOn, setCursorOn] = useState(true);
   const attSeq = useRef(0);
 
   const reset = () => {
@@ -155,10 +170,8 @@ export function CommandInput({
 
   const uniqueAgentNames = [...new Set(agentNames.filter(Boolean))];
   const allowedCommands = commandNames ?? commandNamesForContext(context);
-  const commandAllowed = (c: CommandDef) =>
-    !allowedCommands || allowedCommands.includes(c.name) || c.aliases?.some((a) => allowedCommands.includes(a));
   const cmdSuggestions =
-    value.startsWith('/') && !value.includes(' ') ? matchCommands(value).filter(commandAllowed).slice(0, 10) : [];
+    value.startsWith('/') && !value.includes(' ') ? commandPalette(value, { allowedNames: allowedCommands }) : [];
   const agentSuggestions =
     value.startsWith('@') && !value.includes(' ')
       ? ['all', ...uniqueAgentNames].filter((n) => n.toLowerCase().startsWith(value.slice(1).toLowerCase())).slice(0, 8)
@@ -186,23 +199,59 @@ export function CommandInput({
     setSelectedSuggestion(0);
   }, [value]);
 
+  const safeSelectedSuggestion = clampSuggestionIndex(selectedSuggestion, suggestionCount);
+
   useEffect(() => {
-    if (selectedSuggestion >= suggestionCount) setSelectedSuggestion(Math.max(0, suggestionCount - 1));
-  }, [selectedSuggestion, suggestionCount]);
+    if (selectedSuggestion !== safeSelectedSuggestion) setSelectedSuggestion(safeSelectedSuggestion);
+  }, [selectedSuggestion, safeSelectedSuggestion]);
+
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setCursorOn((on) => !on), 450);
+    return () => clearInterval(timer);
+  }, [active]);
+
+  const commandWindowStart =
+    cmdSuggestions.length > COMMAND_PAGE_SIZE
+      ? Math.min(
+          Math.max(0, safeSelectedSuggestion - Math.floor(COMMAND_PAGE_SIZE / 2)),
+          Math.max(0, cmdSuggestions.length - COMMAND_PAGE_SIZE),
+        )
+      : 0;
+  const shownCommandSuggestions = cmdSuggestions.slice(commandWindowStart, commandWindowStart + COMMAND_PAGE_SIZE);
+  const shown = mask ? '•'.repeat(value.length) : value;
+  const promptWidth = Math.max(20, width ?? process.stdout.columns ?? 100);
+  const inputText = shown || placeholder;
+  const promptLines = wrappedPromptLines(inputText, promptWidth);
+  const suggestionRows =
+    cmdSuggestions.length > 0
+      ? shownCommandSuggestions.length + 1
+      : agentSuggestions.length > 0
+        ? agentSuggestions.length
+        : argSuggestions.length > 0
+          ? argSuggestions.length + 1
+          : 0;
+  const attachmentRows = attachments.length > 0 ? 1 : 0;
+  const hintRows = value || context !== 'hub' ? 1 : 0;
+  const renderedRows = suggestionRows + attachmentRows + promptLines.length + 2 + hintRows;
+
+  useEffect(() => {
+    onHeightChange?.(renderedRows);
+  }, [onHeightChange, renderedRows]);
 
   const completeBest = (): boolean => {
     if (cmdSuggestions.length > 0) {
-      const cmd = cmdSuggestions[Math.min(selectedSuggestion, cmdSuggestions.length - 1)];
+      const cmd = cmdSuggestions[clampSuggestionIndex(safeSelectedSuggestion, cmdSuggestions.length)];
       setValue(`${cmd.name} `);
       return true;
     }
     if (agentSuggestions.length > 0) {
-      const agent = agentSuggestions[Math.min(selectedSuggestion, agentSuggestions.length - 1)];
+      const agent = agentSuggestions[clampSuggestionIndex(safeSelectedSuggestion, agentSuggestions.length)];
       setValue('@' + agent + ' ');
       return true;
     }
     if (argSuggestions.length > 0) {
-      const agent = argSuggestions[Math.min(selectedSuggestion, argSuggestions.length - 1)];
+      const agent = argSuggestions[clampSuggestionIndex(safeSelectedSuggestion, argSuggestions.length)];
       setValue(completeAgentArgument(value, agent));
       return true;
     }
@@ -239,7 +288,7 @@ export function CommandInput({
       }
       if (key.upArrow) {
         if (hasSuggestions) {
-          setSelectedSuggestion((i) => (i - 1 + suggestionCount) % suggestionCount);
+          setSelectedSuggestion((i) => clampSuggestionIndex(i - 1, suggestionCount));
           return;
         }
         setHistIdx((i) => {
@@ -251,7 +300,7 @@ export function CommandInput({
       }
       if (key.downArrow) {
         if (hasSuggestions) {
-          setSelectedSuggestion((i) => (i + 1) % suggestionCount);
+          setSelectedSuggestion((i) => clampSuggestionIndex(i + 1, suggestionCount));
           return;
         }
         setHistIdx((i) => {
@@ -299,49 +348,36 @@ export function CommandInput({
     },
     { isActive: active },
   );
-
-  const shown = mask ? '•'.repeat(value.length) : value;
   const byName = new Map(agents.flatMap((a) => [[a.name, a], [a.alias, a]]));
-  const commandIndexes = new Map(cmdSuggestions.map((c, i) => [c.name, i]));
 
   return (
     <Box flexDirection="column">
-      <Box flexDirection="row" gap={1}>
-        <Text color="gray" wrap="truncate-end">{modeHint(value, context, targetAgent)}</Text>
-        <Text color="cyan">[{context}]</Text>
-        {targetAgent ? <Text color="magenta">[{targetAgent}]</Text> : null}
-        {modelLabel ? <Text color="yellow">[{modelLabel}]</Text> : null}
-      </Box>
       {cmdSuggestions.length > 0 && (
         <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
-          {groupedCommands(cmdSuggestions).map(([group, commands]) => (
-            <Box key={group} flexDirection="column">
-              <Text color="gray" bold>{GROUP_LABEL[group] ?? group}</Text>
-              {commands.map((c) => (
-                (() => {
-                  const selected = commandIndexes.get(c.name) === selectedSuggestion;
-                  return (
+          <Text color="gray">
+            Commands {Math.min(safeSelectedSuggestion + 1, cmdSuggestions.length)}/{cmdSuggestions.length} · ↑/↓
+          </Text>
+          {shownCommandSuggestions.map((c, i) => {
+            const absolute = commandWindowStart + i;
+            const selected = absolute === safeSelectedSuggestion;
+            return (
                 <Text key={c.name}>
-                  <Text color={selected ? 'cyanBright' : 'cyan'} bold>
+                  <Text color={selected ? COLOR.cream : COLOR.creamMuted} bold>
                     {selected ? '› ' : '  '}
-                    {c.name.padEnd(14)}
+                    {c.name.padEnd(13)}
                   </Text>
-                  <Text color="yellow">{c.args.padEnd(22)}</Text>
                   <Text color="gray">{t(c.descKey)}</Text>
                 </Text>
-                  );
-                })()
-              ))}
-            </Box>
-          ))}
+            );
+          })}
         </Box>
       )}
       {agentSuggestions.length > 0 && (
         <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
           {agentSuggestions.map((n, i) => (
             <Text key={n}>
-              <Text color={i === selectedSuggestion ? 'cyanBright' : 'cyan'} bold>
-                {i === selectedSuggestion ? '› ' : '  '}@{n.padEnd(10)}
+              <Text color={i === safeSelectedSuggestion ? COLOR.cream : COLOR.creamMuted} bold>
+                {i === safeSelectedSuggestion ? '› ' : '  '}@{n.padEnd(10)}
               </Text>
               <Text color="gray">
                 {n === 'all'
@@ -357,8 +393,8 @@ export function CommandInput({
           <Text color="gray" bold>Agents</Text>
           {argSuggestions.map((n, i) => (
             <Text key={n}>
-              <Text color={i === selectedSuggestion ? 'cyanBright' : 'cyan'} bold>
-                {i === selectedSuggestion ? '› ' : '  '}{n.padEnd(12)}
+              <Text color={i === safeSelectedSuggestion ? COLOR.cream : COLOR.creamMuted} bold>
+                {i === safeSelectedSuggestion ? '› ' : '  '}{n.padEnd(12)}
               </Text>
               <Text color="gray">
                 {n === 'all'
@@ -372,29 +408,39 @@ export function CommandInput({
       {attachments.length > 0 && (
         <Box flexDirection="row" gap={1} paddingX={1}>
           {attachments.map((a) => (
-            <Text key={a.n} color="cyan" backgroundColor="gray">
+            <Text key={a.n} color={COLOR.cream} backgroundColor={COLOR.promptBackground}>
               {' '}
               {a.kind === 'paste' ? t('input.attPaste', { n: a.n, lines: a.lines }) : t('input.attImage', { n: a.n, file: a.label })}{' '}
             </Text>
           ))}
         </Box>
       )}
-      <Box borderStyle="single" borderColor={active ? 'cyan' : 'gray'} paddingX={1}>
-        <Text color="cyanBright" bold>
-          ›{' '}
-        </Text>
-        {shown ? (
-          <>
-            <Text>{shown}</Text>
-            {active && <Text color="cyanBright">█</Text>}
-          </>
-        ) : (
-          <>
-            {active && <Text color="cyanBright">█</Text>}
-            <Text color="gray">{placeholder}</Text>
-          </>
-        )}
+      <Box flexDirection="column">
+        <Text backgroundColor={COLOR.promptBackground}>{paintLine('', promptWidth)}</Text>
+        {promptLines.map((line, i) => {
+          const last = i === promptLines.length - 1;
+          const placeholderCursor = !shown && active && cursorOn && i === 0;
+          const cursor = shown && active && last && cursorOn ? '█' : '';
+          const prefix = i === 0 ? PROMPT_GUTTER : '  ';
+          const content = placeholderCursor ? `█${line.slice(1)}` : `${line}${cursor}`;
+          return (
+            <Text key={i} backgroundColor={COLOR.promptBackground}>
+              <Text color={active ? BRAND.primary : BRAND.muted} backgroundColor={COLOR.promptBackground} bold>{prefix}</Text>
+              <Text color={shown ? 'white' : COLOR.creamMuted} backgroundColor={COLOR.promptBackground}>
+                {paintLine(content, promptWidth - prefix.length)}
+              </Text>
+            </Text>
+          );
+        })}
+        <Text backgroundColor={COLOR.promptBackground}>{paintLine('', promptWidth)}</Text>
       </Box>
+      {(value || context !== 'hub') && (
+        <Text color="gray" wrap="truncate-end">
+          {modeHint(value, context, targetAgent)}
+          {targetAgent ? ` · ${targetAgent}` : ''}
+          {modelLabel && value ? ` · ${modelLabel}` : ''}
+        </Text>
+      )}
     </Box>
   );
 }

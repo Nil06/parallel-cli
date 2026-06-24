@@ -6,7 +6,7 @@ import { elapsed, truncate } from './theme.js';
 import { Md } from './Md.js';
 import { Spinner } from './Spinner.js';
 import { Timeline } from './Timeline.js';
-import { MARK, MODE, STATE_META, UI, ANIM } from './tokens.js';
+import { MARK, MODE, STATE_META, UI, ANIM, COLOR } from './tokens.js';
 import { latestSignal, toUIEvents } from './events.js';
 
 export const KIND_COLOR: Record<string, string> = {
@@ -68,7 +68,7 @@ function ResultBlock({ agent, compact = false }: { agent: AgentInfo; compact?: b
 const SPINNER_STATES: Set<AgentInfo['state']> = new Set(['thinking', 'working', 'listening', 'waiting']);
 
 function spinnerColor(state: AgentInfo['state']): string {
-  if (state === 'working') return 'cyan';
+  if (state === 'working') return COLOR.cream;
   return 'yellow'; // thinking, listening, waiting
 }
 
@@ -116,14 +116,11 @@ export function AgentRow({
   const signal = latestSignal(agent, toUIEvents(logs));
   const specialist = agent.specialist ? ` #${agent.specialist}` : '';
 
-  // Line 2 content
   let line2: { text: string; color: string } | null = null;
   if (agent.lastResult) {
     line2 = { text: `✓ ${compactResultSummary(agent.lastResult, line2Max)}`, color: UI.ok };
-  } else if (signal) {
+  } else if (signal && signal !== agent.task) {
     line2 = { text: `▸ ${truncate(signal, line2Max)}`, color: UI.accent };
-  } else {
-    line2 = { text: meta.label, color: meta.color };
   }
 
   return (
@@ -143,15 +140,14 @@ export function AgentRow({
         {specialist ? <Text color={UI.note}>{specialist}</Text> : null}
         <Text color={UI.text}>  {truncate(agent.task, taskMax)}</Text>
       </Text>
-      {/* Line 2: status + right-aligned telemetry */}
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text color={line2.color} wrap="truncate-end">
-          {line2.text}
-        </Text>
-        <Text color={UI.muted}>
-          {telemetry}
-        </Text>
-      </Box>
+      {line2 ? (
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text color={line2.color} wrap="truncate-end">
+            {line2.text}
+          </Text>
+          <Text color={UI.muted}>{telemetry}</Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }

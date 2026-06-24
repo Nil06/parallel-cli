@@ -102,12 +102,46 @@ export function visibleCommands(): CommandDef[] {
   return COMMANDS.filter((c) => !c.hidden);
 }
 
+const COMMAND_GROUP_ORDER: Array<NonNullable<CommandDef['group']>> = ['modes', 'control', 'views', 'settings', 'git', 'other'];
+const COMMAND_PALETTE_PRIORITY = [
+  '/ask',
+  '/task',
+  '/plan',
+  '/send',
+  '/focus',
+  '/attach',
+  '/agents',
+  '/board',
+  '/diff',
+  '/settings',
+  '/help',
+  '/quit',
+];
+
+function commandRank(c: CommandDef): number {
+  const priority = COMMAND_PALETTE_PRIORITY.indexOf(c.name);
+  if (priority !== -1) return priority;
+  const group = COMMAND_GROUP_ORDER.indexOf(c.group ?? 'other');
+  return COMMAND_PALETTE_PRIORITY.length + group * 100 + COMMANDS.indexOf(c);
+}
+
+export function sortCommandsForPalette(commands: CommandDef[]): CommandDef[] {
+  return [...commands].sort((a, b) => commandRank(a) - commandRank(b) || a.name.localeCompare(b.name));
+}
+
 export function matchCommands(input: string, opts: { includeHidden?: boolean } = {}): CommandDef[] {
   if (!input.startsWith('/')) return [];
   const word = input.split(/\s+/)[0].toLowerCase();
   return COMMANDS.filter((c) => opts.includeHidden || !c.hidden).filter(
     (c) => c.name.startsWith(word) || c.aliases?.some((a) => a.startsWith(word)),
   );
+}
+
+export function commandPalette(input: string, opts: { includeHidden?: boolean; allowedNames?: string[] } = {}): CommandDef[] {
+  const allowed = opts.allowedNames
+    ? (c: CommandDef) => opts.allowedNames!.includes(c.name) || c.aliases?.some((a) => opts.allowedNames!.includes(a))
+    : () => true;
+  return sortCommandsForPalette(matchCommands(input, opts).filter(allowed));
 }
 
 function agentList(ctl: Controller): string {

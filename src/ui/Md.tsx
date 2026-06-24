@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import { BRAND } from './tokens.js';
 
 /**
  * Mini markdown renderer for agent summaries — line-based, zero deps.
@@ -38,7 +39,7 @@ export function Md({ text, dim }: { text: string; dim?: boolean }) {
         const header = line.match(/^#{1,3}\s+(.*)$/);
         if (header) {
           return (
-            <Text key={i} bold color="cyanBright">
+            <Text key={i} bold color={BRAND.primary}>
               {header[1]}
             </Text>
           );
@@ -48,7 +49,7 @@ export function Md({ text, dim }: { text: string; dim?: boolean }) {
           return (
             <Text key={i} wrap="wrap" dimColor={dim}>
               {bullet[1]}
-              <Text color="cyan">• </Text>
+              <Text color={BRAND.primary}>• </Text>
               {inline(bullet[2], `b${i}`)}
             </Text>
           );
@@ -58,7 +59,7 @@ export function Md({ text, dim }: { text: string; dim?: boolean }) {
           return (
             <Text key={i} wrap="wrap" dimColor={dim}>
               {numbered[1]}
-              <Text color="cyan">{numbered[2]}. </Text>
+              <Text color={BRAND.primary}>{numbered[2]}. </Text>
               {inline(numbered[3], `n${i}`)}
             </Text>
           );

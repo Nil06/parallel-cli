@@ -27,10 +27,9 @@ import { BoardView, CostView, DiffView, HelpView, NotesView, SessionsView, Skill
 import { SelectList, WizardStep, type SelectItem } from './Wizard.js';
 import { BRAND, CHROME, STATE, STATE_META, UI, middleTruncate } from './tokens.js';
 import type { AgentInfo } from '../types.js';
+import { VERSION } from '../version.js';
 
 const LOGO = 'Parallel';
-// Version from package.json. Hardcoded — rootDir: "src" prevents importing ../../package.json.
-const VERSION = '0.4.5';
 
 type Phase = 'lang' | 'folder' | 'session' | 'provider' | 'model' | 'main';
 type ProviderStep =
@@ -99,14 +98,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   // Focus mode (/focus <agent>): plain input is routed to that agent.
   const [focus, setFocus] = useState<string | null>(null);
   const [rawLogs, setRawLogs] = useState(false);
-  const [systemLines, setSystemLines] = useState<{ text: string; level?: SystemLevel }[]>(
-    directFolder
-      ? [
-          { text: t('main.ready1', { folder: directFolder }), level: 'ok' as SystemLevel },
-          { text: t('main.ready2'), level: 'info' as SystemLevel },
-        ]
-      : [],
-  );
+  const [systemLines, setSystemLines] = useState<{ text: string; level?: SystemLevel }[]>([]);
   const [inputReady, setInputReady] = useState(Boolean(directFolder));
 
   const ctl = ctlRef.current;
@@ -316,10 +308,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   };
 
   const enterMain = () => {
-    setSystemLines([
-      { text: t('main.ready1', { folder }), level: 'ok' as SystemLevel },
-      { text: t('main.ready2'), level: 'info' as SystemLevel },
-    ]);
+    setSystemLines([]);
     setPhase('main');
     setInputReady(false);
     setTimeout(() => setInputReady(true), 350);
@@ -353,7 +342,7 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
     const sessionProvider = ctl ? ctl.sessionProvider() : getProvider(config);
     return (
       <Box flexDirection="column" paddingX={1}>
-        <Text bold color="cyanBright">
+        <Text bold color={BRAND.primary}>
           {LOGO}
         </Text>
         <Text color="gray">{t('tagline')}</Text>
@@ -765,6 +754,17 @@ export function App({ config, initialFolder }: { config: ParallelConfig; initial
   );
 }
 
+function EmptyHub({ bodyHeight }: { bodyHeight: number }) {
+  const topPad = Math.max(0, Math.floor((bodyHeight - 3) / 2));
+  return (
+    <Box flexDirection="column">
+      {topPad > 0 ? <Box height={topPad} /> : null}
+      <Text color={UI.text}>{t('main.emptyCard.cta')}</Text>
+      <Text color={CHROME.muted}>{t('main.emptyCard.hints')}</Text>
+    </Box>
+  );
+}
+
 function MainScreen({
   ctl,
   folder,
@@ -800,12 +800,11 @@ function MainScreen({
   const cols = Math.max(20, stdout?.columns ?? 100);
   const rows = Math.max(12, stdout?.rows ?? 30);
   const settingsOpen = view === 'settings' || view === 'settings-session';
+  const [inputRows, setInputRows] = useState(3);
 
   // Height budget: fixed sections → body gets the remainder.
-  const headerLines = 4; // border-box header (top border + 2 content lines + bottom border)
-  const footerLine2 = 1; // always shown
-  const footerLine1 = agents.length === 0 ? 1 : 0;
-  const footerLines = footerLine1 + footerLine2;
+  const headerLines = 4; // Codex-like framed header: top + 2 content lines + bottom
+  const footerLines = 1;
   // System messages: count actual rendered lines (including \n splits + "Session" label).
   const systemMsgLines =
     systemLines.length > 0 && !settingsOpen
@@ -817,8 +816,8 @@ function MainScreen({
           : systemLines
         ).reduce((sum, l) => sum + l.text.split('\n').length, 0)
       : 0;
-  const inputLines = 4; // modeHint (1) + input border box (3)
-  const spacerLines = 2; // after header + before footer
+  const inputLines = inputRows;
+  const spacerLines = 1;
   const approvalHeight = approval ? 6 : 0;
   const questionHeight = question ? 7 : 0;
   const bodyHeight = Math.max(
@@ -905,6 +904,9 @@ function MainScreen({
     : 'gray';
 
   const folderMax = Math.max(10, cols - 40);
+  const provider = ctl.sessionProvider();
+  const providerModel = provider ? `${provider.name}:${ctl.session.model}` : 'no model';
+  const headerColor = view === 'agents' && agents.length === 0 ? BRAND.muted : CHROME.muted;
 
   // View breadcrumb: when not in agents view, show the view name instead of "control room".
   const VIEW_LABEL: Record<ViewName, string> = {
@@ -926,23 +928,23 @@ function MainScreen({
     <Box flexDirection="column" height={rows}>
       {/* ── Header ── */}
       <Box flexDirection="column">
-        <Text color={CHROME.muted}>╭{'─'.repeat(cols - 2)}╮</Text>
+        <Text color={headerColor}>╭{'─'.repeat(cols - 2)}╮</Text>
         <Box flexDirection="row" width={cols}>
-          <Text color={CHROME.muted}>│ </Text>
+          <Text color={headerColor}>│ </Text>
           <Box flexDirection="row" width={cols - 4} justifyContent="space-between">
             <Box flexDirection="row">
               <Text bold color={BRAND.primary}>PARALLEL</Text>
               <Text color={globalDotColor}> ●</Text>
-              <Text color={view === 'agents' ? CHROME.muted : BRAND.muted}> {viewLabel}</Text>
+              <Text color={view === 'agents' ? CHROME.muted : BRAND.muted}> {agents.length === 0 ? 'ready' : viewLabel}</Text>
               {rawLogs && focused ? <Text color={UI.warn}> [RAW]</Text> : null}
             </Box>
             <Text color={CHROME.muted}>{middleTruncate(folder, folderMax)}</Text>
           </Box>
-          <Text color={CHROME.muted}> │</Text>
+          <Text color={headerColor}> │</Text>
         </Box>
         <Box flexDirection="row" width={cols}>
-          <Text color={CHROME.muted}>│ </Text>
-          <Box flexDirection="row" width={cols - 4} justifyContent={agents.length > 0 ? 'space-between' : 'flex-end'}>
+          <Text color={headerColor}>│ </Text>
+          <Box flexDirection="row" width={cols - 4} justifyContent="space-between">
             {agents.length > 0 ? (
               <Box flexDirection="row">
                 <Text>
@@ -955,15 +957,15 @@ function MainScreen({
                   <Text color={errorCount > 0 ? STATE.error : CHROME.muted}>✗ {errorCount} err</Text>
                 </Text>
               </Box>
-            ) : null}
+            ) : (
+              <Text color={CHROME.muted}>{providerModel}</Text>
+            )}
             <Text color={CHROME.muted}>v{VERSION}</Text>
           </Box>
-          <Text color={CHROME.muted}> │</Text>
+          <Text color={headerColor}> │</Text>
         </Box>
-        <Text color={CHROME.muted}>╰{'─'.repeat(cols - 2)}╯</Text>
+        <Text color={headerColor}>╰{'─'.repeat(cols - 2)}╯</Text>
       </Box>
-
-      <Text> </Text>
 
       {/* body */}
       <Box height={bodyHeight} overflow="hidden" flexDirection="column">
@@ -986,11 +988,12 @@ function MainScreen({
         ) : view === 'specialists' ? (
           <SpecialistsView specialists={ctl.getSpecialists()} bodyHeight={bodyHeight} />
         ) : view === 'help' ? (
-          <HelpView bodyHeight={bodyHeight} />
+          <HelpView
+            bodyHeight={bodyHeight}
+            onSelect={(cmd) => onInput(cmd)}
+          />
         ) : agents.length === 0 ? (
-          <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1}>
-            <Text color="gray">{t('main.empty')}</Text>
-          </Box>
+          <EmptyHub bodyHeight={bodyHeight} />
         ) : focused ? (
           <Box flexDirection="column">
             <AgentTranscript agent={focused} logs={visibleLogs} raw={rawLogs} scrolled={clampedScroll} cols={cols} />
@@ -1047,36 +1050,29 @@ function MainScreen({
       {/* input */}
       <CommandInput
         active={inputActive}
-        placeholder={focus ? `Message ${focus} or /command` : 'Task mode: describe work to run · /ask question · /plan proposal · / for commands'}
+        placeholder={focus ? `Message ${focus} or /command` : t('main.prompt')}
         context={focus ? 'focus' : 'hub'}
         targetAgent={focused?.name}
         modelLabel={ctl.sessionProvider() ? `${ctl.sessionProvider()?.name}:${ctl.session.model}` : undefined}
         agentNames={agentNames}
         agents={agents}
+        width={cols}
+        onHeightChange={setInputRows}
         onSubmit={onInput}
         onEscape={onEscape}
         notify={notify}
       />
-      <Text> </Text>
       {/* ── Footer (1-2 conditional lines per §6.2) ── */}
       <Box flexDirection="column">
-        {/* Line 1: Command hints — only when no agents exist */}
-        {agents.length === 0 ? (
-          <Text>
-            <Text color={BRAND.muted}>/ask /task /plan</Text>
-            <Text color={CHROME.muted}> · Tab autocompletes · Esc clears</Text>
-          </Text>
-        ) : null}
-        {/* Line 2: Session status — always shown */}
         <Text>
-          <Text color={CHROME.muted}>⌘ Parallel</Text>
+          <Text color={CHROME.muted}>/ for commands</Text>
           <Text color={CHROME.muted}> · Shell </Text>
           <Text color={
             ctl.session.approvalMode === 'ask' ? UI.warn :
             ctl.session.approvalMode === 'yolo' ? UI.danger :
             UI.ok
           }>{ctl.session.approvalMode === 'auto-safe' ? 'auto' : ctl.session.approvalMode}</Text>
-          <Text color={CHROME.muted}> · Sessions: {Controller.listSessions(ctl.projectRoot).length}</Text>
+          {agents.length > 0 ? <Text color={CHROME.muted}> · Sessions {Controller.listSessions(ctl.projectRoot).length}</Text> : null}
           {ctl.questions.length > 0 ? (
             <Text color={UI.warn}> · ❓{ctl.questions.length}</Text>
           ) : null}

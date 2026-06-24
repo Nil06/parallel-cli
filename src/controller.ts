@@ -23,7 +23,7 @@ import type {
   Specialist,
 } from './types.js';
 
-const AGENT_COLORS = ['cyan', 'magenta', 'yellow', 'green', 'blue', 'redBright', 'cyanBright', 'magentaBright'];
+const AGENT_COLORS = ['#f3e7c7', 'magenta', 'yellow', 'green', 'whiteBright', 'redBright', '#c8bfa6', 'magentaBright'];
 
 export function normalizeShellApprovalMode(mode: string): ShellApprovalMode | null {
   if (mode === 'ask' || mode === 'auto-safe' || mode === 'yolo') return mode;

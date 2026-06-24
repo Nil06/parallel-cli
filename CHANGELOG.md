@@ -2,6 +2,31 @@
 
 All notable changes to Parallel are documented here.
 
+## 0.4.6 - 2026-06-24
+
+### 0.4.6 Added
+
+- Added an interactive npm update prompt on startup with daily cache, CI/headless/attach skips, `PARALLEL_SKIP_UPDATE_CHECK=1`, and `--no-update`.
+- Added a Codex-like empty hub with a quieter framed header, cream-toned accents, and a full-width prompt block with distinct background.
+- Added a complete paginated slash palette driven by one deterministic rendered order.
+- Added selectable `/help` command navigation with visible highlight and Enter-to-run behavior.
+- Added localized prompt placeholder copy and an i18n audit to keep all used UI keys translated.
+
+### 0.4.6 Changed
+
+- Reduced default Hub noise by removing persistent startup toasts, duplicate task hints, and always-on command footer lines.
+- Replaced blue/cyan UI accents with a softer cream theme across hub, palettes, wizard/settings lists, markdown summaries, and attached agent terminals.
+- Made the prompt block start at three rows, grow when input wraps, and show the blinking cursor on the first placeholder character while empty.
+- Reused the same minimal prompt treatment in dedicated agent terminals and toned down their footer.
+- Simplified agent rows so secondary telemetry only appears when there is a useful latest signal or result.
+- Moved command palette priority to shared command helpers so autocomplete, help, and rendering stay aligned.
+
+### 0.4.6 Fixed
+
+- Fixed slash palette Up/Down navigation jumping to visually unrelated commands.
+- Fixed `/help` being scrollable but not actually selectable.
+- Fixed Wizard and Settings selection lists wrapping around unexpectedly by clamping navigation at list boundaries.
+
 ## 0.4.5 - 2026-06-23
 
 ### 0.4.5 Added

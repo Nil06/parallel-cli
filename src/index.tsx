@@ -8,6 +8,7 @@ import { App } from './ui/App.js';
 import { Controller } from './controller.js';
 import { loadConfig, providerReady, setConfigHome } from './config.js';
 import { setLang } from './i18n.js';
+import { maybeRunStartupUpdate } from './update.js';
 
 const argv = process.argv.slice(2);
 
@@ -25,6 +26,8 @@ const headless = argv.includes('--headless');
 if (headless) argv.splice(argv.indexOf('--headless'), 1);
 const jsonOut = argv.includes('--json');
 if (jsonOut) argv.splice(argv.indexOf('--json'), 1);
+const noUpdate = argv.includes('--no-update');
+if (noUpdate) argv.splice(argv.indexOf('--no-update'), 1);
 const configHome = takeFlagValue('--config-home');
 
 if (argv.includes('--help') || argv.includes('-h')) {
@@ -39,6 +42,8 @@ Usage:
   parallel --first-run   Test the first-run wizard with a temporary config home
   parallel --config-home <dir> [folder]
                           Use <dir>/config.json instead of ~/.parallel/config.json
+  parallel --no-update [folder]
+                          Start without checking npm for a newer Parallel version
   parallel --headless "task1" ["task2"…] [--json]
                           No TUI: one agent per task in the current folder,
                           auto-approved commands, summary (or JSON) on stdout — for CI
@@ -48,6 +53,7 @@ Environment variables:
   PARALLEL_MODEL                        Default model
   PARALLEL_BASE_URL                     OpenAI-compatible endpoint
   PARALLEL_NO_ALT_SCREEN=1              Disable the alternate terminal screen.
+  PARALLEL_SKIP_UPDATE_CHECK=1           Disable npm update checks.
 
 Inside the TUI:
   <task> + Enter         Launch agent N+1 — even while the others are working
@@ -170,6 +176,8 @@ if (!process.stdout.isTTY) {
   console.error('Parallel requires an interactive terminal (TTY).');
   process.exit(1);
 }
+
+if (await maybeRunStartupUpdate(firstRun || noUpdate)) process.exit(0);
 
 const config = loadConfig();
 if (config.language) setLang(config.language);
