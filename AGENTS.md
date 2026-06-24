@@ -3,6 +3,7 @@
 - Read the actual codebase, README, and relevant git history before planning major Parallel changes.
 - For attached implementation plans, do not edit the plan file; use the existing todos and mark them as work progresses.
 - Do not commit, push, tag, publish to GitHub, or publish to npm unless the user explicitly instructs it.
+- Never use `cursoragent` (or any Cursor/agent identity) as git author, git committer, GitHub actor, npm publisher identity, or release identity. Before every commit/push/publish, verify the identity is the user's expected identity (`Nil06 <nil@haldorix.com>` for this repo unless the user says otherwise).
 - Keep public docs provider-neutral; do not spotlight a single provider such as DeepSeek outside normal provider lists.
 - Before adding release features, audit each feature against the real code and UX first.
 
