@@ -1,10 +1,10 @@
 # Parallel
 
-Real-time multi-agent coding from one terminal control room.
+Real-time coding agents that work like a live team, not isolated background jobs.
 
-Parallel lets you run several AI coding agents on the same repository at the same time. Each agent has its own task, mode, live activity timeline, model, and shared session context. The TUI stays keyboard-first so you can launch work, inspect progress, answer approvals, steer agents, and review changes without leaving the terminal.
+Parallel lets several AI coding agents co-edit the same repository at the same time with shared awareness injected before every model action. Each agent has its own task, mode, live activity timeline, model, and visible coordination context. The TUI stays keyboard-first so you can launch work, inspect progress, answer approvals, steer agents, review risks, and reconcile changes without leaving the terminal.
 
-> One hub. Many agents. Shared context. Human in control.
+> One working tree. Many agents. Shared awareness. Human in control.
 
 [![npm version](https://img.shields.io/npm/v/@parallel-cli/parallel?color=blue)](https://www.npmjs.com/package/@parallel-cli/parallel)
 ![node version](https://img.shields.io/node/v/@parallel-cli/parallel)
@@ -13,14 +13,18 @@ Parallel lets you run several AI coding agents on the same repository at the sam
 
 ## Highlights
 
-- Run multiple agents in parallel on one project.
-- Choose explicit modes: `/ask`, `/task`, and `/plan`.
+- Run multiple agents as a live team on one shared working tree.
+- Choose explicit modes: `/ask`, `/task`, `/plan`, and `/review`.
 - Type plain text to launch a task agent immediately.
 - Use context-aware input in the hub, focus view, and attached agent terminals.
 - Steer one agent with `@a1 ...` or broadcast with `@all ...`.
 - Open dedicated agent terminals with native scrollback.
 - Use a cleaner Codex-like hub with a framed header, focused prompt bar, and quieter empty state.
 - Review agents, notes, file activity, diffs, cost, skills, specialists, and saved sessions from the TUI.
+- Use `/review [agent|all]` to spawn a lightweight ask-mode reviewer with verdict, risks, tests, and files to inspect.
+- Avoid lost work with file revision safety: stale `write_file` and `edit_file` calls must re-read and merge before retrying.
+- Nudge agents immediately when another agent posts a targeted note, with dedupe and rate-limit safeguards.
+- See overlapping claims and repeated co-edit conflicts in the Hub, `/board`, `/diff`, and agent timelines.
 - Track shell-created file mutations in the same live diff feed as agent edits.
 - Configure OpenAI-compatible providers through a guided wizard and settings panel.
 - Use 29 provider presets across Western, Chinese, Gateway, Inference, and Local categories.
@@ -86,6 +90,7 @@ Use explicit modes when intent matters:
 /ask Reviewer: should we split the CLI parser?
 /plan Migration: propose the safest rollout for the config change
 /task Builder: implement the approved plan
+/review all before we commit
 ```
 
 Steer a running agent:
@@ -102,11 +107,36 @@ Broadcast to every agent:
 
 `@all` steers active agents in real time. Finished, stopped, or errored agents are not relaunched by a broadcast.
 
+## Best Use Case: Coupled Work
+
+Parallel is strongest when the work is too coupled for isolated fan-out and too large for one agent.
+
+Example live-team flow:
+
+```text
+/task API: define the new billing quote contract in src/api/quotes.ts
+/task Client: build the UI client against the quote contract
+/task Tests: write integration coverage for quote creation and validation
+```
+
+The API agent can claim `src/api`, post a note with the proposed signature, and update the contract. The client agent sees that note and the diff before its next model action, re-reads the file, and adapts without inventing a second interface. The tests agent watches both sides, adds coverage, and can ask for clarification before the three agents collide.
+
+Before committing:
+
+```text
+/review all verify the API contract, client usage, and tests agree
+```
+
+The reviewer is ask-only: it does not edit, does not gate the session globally, and returns a structured verdict with risks and validation steps.
+
 ## Agent Modes
 
 - `/ask`: questions, reviews, audits, and tradeoffs. The agent answers and advises; mutating tools and shell commands are blocked.
-- `/task`: implementation work. The agent can execute, edit, validate, and summarize.
+- `/task`: implementation work. The agent can execute, edit, validate, and summarize. It may also conclude that no file change is needed when the task is a verification.
 - `/plan`: risky or unclear work. The agent inspects first, presents a plan, then edits only after explicit approval. A timeout does not approve the plan.
+- `/review`: lightweight reviewer around `/ask`. It inspects the current shared-tree work and returns `APPROVE`, `REVISE`, or `BLOCK` with risks, tests to run, and files to inspect.
+
+Task and plan agents maintain a small Cursor-style checklist with one active step at a time. The runtime also encourages batched inspection through `read_many` and `inspect_project` so agents avoid slow chains of tiny read-only shell commands.
 
 Aliases:
 
@@ -118,7 +148,7 @@ Plain text is equivalent to `/task`.
 
 ## Control Room
 
-The main TUI is the Parallel hub. The default view stays intentionally quiet: a Codex-like framed header, cream-toned accents, a focused prompt block, and detailed status moved into explicit views.
+The main TUI is the Parallel hub. The default view stays intentionally quiet: a Codex-like framed header, cream-toned accents, a focused prompt block, compact cropped agent rows, and detailed status moved into explicit views.
 
 It is designed to answer:
 
@@ -127,6 +157,11 @@ It is designed to answer:
 - what each agent just did
 - what changed in the project
 - what model, provider, shell mode, and cost are active
+
+Agent rows stay compact even when summaries are long. Use the row shortcuts to expand the right level of detail:
+
+- `full /focus a1`: open the full in-Hub transcript and result for one agent.
+- `term /attach a1`: reopen that agent's dedicated terminal.
 
 Input has three explicit contexts:
 
@@ -146,6 +181,8 @@ Common hub commands:
 - `/agents`: agent overview.
 - `/focus a1`: inspect and steer one agent.
 - `/raw`: toggle raw detail in focus view.
+- `/attach a1`: open or reopen an agent's dedicated terminal.
+- `/review all`: ask-mode reviewer with verdict, risks, tests, and files to inspect.
 - `/board`: shared blackboard, claims, notes, and file activity.
 - `/diff`: live diff history.
 - `/cost`: token and cost breakdown.
@@ -180,8 +217,10 @@ parallel attach a1 --root .
 
 Attached terminals show:
 
+- a launch header with agent, mode, model, and task
 - the selected agent's live timeline
 - native terminal scrollback
+- append-only final results after `done`, `error`, or `stopped`
 - model, elapsed time, context, and cost
 - other agents' current state
 - approval and question prompts for that agent
@@ -197,6 +236,7 @@ plain text sends a message to this agent
 /task Tests: write parser regression tests
 /ask Reviewer: is this result safe to merge?
 /plan Migration: prepare a migration plan
+/review all before commit
 /raw
 /quit
 ```
@@ -265,6 +305,7 @@ If the update succeeds, restart Parallel to run the new version. Use `parallel -
 - `/ask [Name:] <question> [--model=m]`: launch an ask-only agent.
 - `/task [Name:] <task> [--model=m] [#skill]`: launch a task agent. Plain text does the same.
 - `/plan [Name:] <task> [--model=m]`: launch a plan-first agent. It cannot mutate files or run risky shell commands until you manually approve the plan.
+- `/review [agent|all] [prompt]`: launch a lightweight ask-mode reviewer for one agent or the whole shared tree.
 - `/issue <n>`: spawn a task from a GitHub issue. Requires the `gh` CLI, a GitHub repository, and `gh auth login`.
 - `/specialist <name> <task>`: spawn with a specialist persona.
 - `/specialist new <name> [global]`: create a specialist template.
@@ -293,7 +334,7 @@ If the update succeeds, restart Parallel to run the new version. Use `parallel -
 ### Views And Sessions
 
 - `/agents`: agent overview.
-- `/board`: shared blackboard, file activity, claims, and notes.
+- `/board`: shared blackboard, work-map warnings, claims, file activity, and notes.
 - `/notes`: full notes history.
 - `/diff`: live diff history.
 - `/cost`: token and cost breakdown.
@@ -375,14 +416,20 @@ When an agent writes a file:
 
 1. Parallel checks whether the file changed since that agent last read it.
 2. If the file is unchanged, the write proceeds.
-3. If another agent changed it, the write is rejected once.
-4. The agent receives the other change as context, re-reads the file, merges both intentions, and retries.
+3. If another agent or shell command changed it, the write is rejected with an adaptation diff.
+4. The stale baseline is not silently synchronized. The agent must call `read_file`, merge both intentions on top of the current revision, and retry.
 
-This keeps agents moving without allowing silent overwrites.
+The same stale-read guard applies to `edit_file`, even when `old_string` still exists. This keeps agents moving without allowing silent overwrites.
 
 Commands run through `run_command` are also snapshotted before and after execution. If a shell command edits, creates, or deletes tracked project files, Parallel records those mutations in `/diff`, `/board`, and `/commit` ownership just like tool-based edits.
 
 The work map is advisory, not a lock. Agents can declare claims with `claim_files`; Parallel detects overlapping claims and repeated conflicts, then shows non-blocking warnings in `/board` and injects them into agent context so agents can coordinate before collisions become expensive.
+
+## Shared-Tree Vs Isolated Agents
+
+Use Parallel's shared-tree mode when agents need to negotiate live contracts: API and client, schema and tests, parser and docs, or any change where one agent's edit should affect another agent's next step.
+
+Use isolated agents or separate worktrees for embarrassingly parallel work: unrelated files, independent chores, or experiments you only want to merge after review. Parallel's identity is the shared-tree team workflow; isolation is a future complement, not the default.
 
 ## Headless Mode
 

@@ -28,11 +28,13 @@ export class Blackboard extends EventEmitter {
   changes: FileChange[] = [];
   logs: LogEntry[] = [];
   workMapWarnings: WorkMapWarning[] = [];
+  private fileRevisions = new Map<string, number>();
 
   private noteSeq = 0;
   private changeSeq = 0;
   private logSeq = 0;
   private persistTimer: NodeJS.Timeout | null = null;
+  private recentNoteKeys = new Map<string, Note>();
 
   constructor(public projectRoot: string) {
     super();
@@ -91,6 +93,7 @@ export class Blackboard extends EventEmitter {
       agentId,
       agentName: agent?.name ?? agentId,
       op,
+      revision: this.fileRevision(relPath),
       ts: Date.now(),
     });
     this.touch();
@@ -104,9 +107,19 @@ export class Blackboard extends EventEmitter {
       const target = this.getAgentByName(to);
       if (target) to = target.name;
     }
-    const note: Note = { id: ++this.noteSeq, from, to, content, ts: Date.now() };
+    const now = Date.now();
+    const key = `${from.toLowerCase()}\u0000${to.toLowerCase()}\u0000${content.trim()}`;
+    const recent = this.recentNoteKeys.get(key);
+    if (recent && now - recent.ts < 10_000) return recent;
+    const note: Note = { id: ++this.noteSeq, from, to, content, ts: now };
     this.notes.push(note);
     if (this.notes.length > 400) this.notes.splice(0, this.notes.length - 400);
+    this.recentNoteKeys.set(key, note);
+    if (this.recentNoteKeys.size > 100) {
+      for (const [k, n] of this.recentNoteKeys) {
+        if (now - n.ts > 30_000 || this.recentNoteKeys.size > 100) this.recentNoteKeys.delete(k);
+      }
+    }
     this.log('', 'note', `✉ ${from} → ${to}: ${content}`);
     // Lets the controller nudge the recipient so it reads the note NOW
     // instead of at its next natural turn.
@@ -130,6 +143,9 @@ export class Blackboard extends EventEmitter {
 
   addChange(agentId: string, relPath: string, before: string, after: string): FileChange {
     const agent = this.agents.get(agentId);
+    const beforeRevision = this.fileRevision(relPath);
+    const afterRevision = beforeRevision + 1;
+    this.fileRevisions.set(relPath, afterRevision);
     const change: FileChange = {
       id: ++this.changeSeq,
       agentId,
@@ -137,6 +153,8 @@ export class Blackboard extends EventEmitter {
       path: relPath,
       before,
       after,
+      beforeRevision,
+      afterRevision,
       ts: Date.now(),
     };
     this.changes.push(change);
@@ -180,6 +198,16 @@ export class Blackboard extends EventEmitter {
 
   lastChangeId(): number {
     return this.changes.length > 0 ? this.changes[this.changes.length - 1].id : 0;
+  }
+
+  fileRevision(relPath: string): number {
+    return this.fileRevisions.get(relPath) ?? 0;
+  }
+
+  resolveConflict(relPath: string): void {
+    this.conflictCounts.delete(relPath);
+    this.workMapWarnings = this.workMapWarnings.filter((w) => w.id !== `conflict:${relPath}`);
+    this.touch();
   }
 
   private static normClaim(p: string): string {
@@ -328,6 +356,13 @@ export class Blackboard extends EventEmitter {
     this.workMapWarnings = [...(data.workMapWarnings ?? [])].sort((a, b) => a.ts - b.ts);
     this.noteSeq = this.notes.reduce((max, n) => Math.max(max, n.id), 0);
     this.changeSeq = this.changes.reduce((max, c) => Math.max(max, c.id), 0);
+    this.fileRevisions = new Map();
+    for (const c of this.changes) {
+      this.fileRevisions.set(c.path, Math.max(this.fileRevision(c.path), c.afterRevision ?? c.id));
+    }
+    for (const a of this.fileActivity.values()) {
+      if (a.revision !== undefined) this.fileRevisions.set(a.path, Math.max(this.fileRevision(a.path), a.revision));
+    }
     this.touch();
   }
 }

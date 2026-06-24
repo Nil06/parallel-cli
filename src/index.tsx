@@ -58,6 +58,7 @@ Environment variables:
 Inside the TUI:
   <task> + Enter         Launch agent N+1 — even while the others are working
   @a1 <message>          Real-time instruction to an agent (@all for everyone)
+  /review [agent|all]    Ask-mode reviewer: verdict, risks, tests, files
   /project [folder]      Change project folder or reopen the folder picker
   /wizard                Relaunch the setup wizard
   /help                  All commands

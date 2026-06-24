@@ -24,6 +24,7 @@ interface Props {
   agents?: AgentInfo[];
   width?: number;
   onHeightChange?: (rows: number) => void;
+  onIdleNavigation?: (direction: 'up' | 'down') => void;
   onSubmit: (value: string, images?: string[]) => void;
   onEscape?: () => void;
   notify?: (line: string) => void;
@@ -51,6 +52,7 @@ function modeHint(value: string, context: InputContext, targetAgent?: string): s
   if (v.startsWith('/ask') || v === '/a') return 'Ask mode · advice only · no edits';
   if (v.startsWith('/task') || v === '/t') return 'Task mode · execute, edit, validate';
   if (v.startsWith('/plan') || v === '/p') return 'Plan mode · asks before editing';
+  if (v.startsWith('/review')) return 'Review mode · verdict, risks, tests';
   return '↑/↓ select · Enter accept';
 }
 
@@ -61,7 +63,7 @@ export function bestCommandCompletion(value: string): string | null {
 
 export function commandNamesForContext(context: InputContext): string[] | undefined {
   if (context !== 'attach') return undefined;
-  return ['/ask', '/a', '/task', '/t', '/plan', '/p', '/send', '/raw', '/quit', '/exit', '/detach'];
+  return ['/ask', '/a', '/task', '/t', '/plan', '/p', '/review', '/send', '/raw', '/quit', '/exit', '/detach'];
 }
 
 export function agentArgCommand(value: string): string | null {
@@ -112,6 +114,7 @@ export function CommandInput({
   agents = [],
   width,
   onHeightChange,
+  onIdleNavigation,
   onSubmit,
   onEscape,
   notify,
@@ -291,6 +294,10 @@ export function CommandInput({
           setSelectedSuggestion((i) => clampSuggestionIndex(i - 1, suggestionCount));
           return;
         }
+        if (!value && attachments.length === 0 && onIdleNavigation) {
+          onIdleNavigation('up');
+          return;
+        }
         setHistIdx((i) => {
           const ni = i === -1 ? history.length - 1 : Math.max(0, i - 1);
           if (history[ni] !== undefined) setValue(history[ni]);
@@ -301,6 +308,10 @@ export function CommandInput({
       if (key.downArrow) {
         if (hasSuggestions) {
           setSelectedSuggestion((i) => clampSuggestionIndex(i + 1, suggestionCount));
+          return;
+        }
+        if (!value && attachments.length === 0 && onIdleNavigation) {
+          onIdleNavigation('down');
           return;
         }
         setHistIdx((i) => {

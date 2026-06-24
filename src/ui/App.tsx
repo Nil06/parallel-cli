@@ -817,7 +817,7 @@ function MainScreen({
         ).reduce((sum, l) => sum + l.text.split('\n').length, 0)
       : 0;
   const inputLines = inputRows;
-  const spacerLines = 1;
+  const spacerLines = 2;
   const approvalHeight = approval ? 6 : 0;
   const questionHeight = question ? 7 : 0;
   const bodyHeight = Math.max(
@@ -907,6 +907,8 @@ function MainScreen({
   const provider = ctl.sessionProvider();
   const providerModel = provider ? `${provider.name}:${ctl.session.model}` : 'no model';
   const headerColor = view === 'agents' && agents.length === 0 ? BRAND.muted : CHROME.muted;
+  const workMapAlerts = ctl.board.workMapWarnings.filter((w) => w.level !== 'info');
+  const conflictAlerts = workMapAlerts.filter((w) => w.level === 'conflict');
 
   // View breadcrumb: when not in agents view, show the view name instead of "control room".
   const VIEW_LABEL: Record<ViewName, string> = {
@@ -955,6 +957,9 @@ function MainScreen({
                   <Text color={doneCount > 0 ? STATE.done : CHROME.muted}>✓ {doneCount} done</Text>
                   {' · '}
                   <Text color={errorCount > 0 ? STATE.error : CHROME.muted}>✗ {errorCount} err</Text>
+                  {workMapAlerts.length > 0 ? (
+                    <Text color={conflictAlerts.length > 0 ? UI.danger : UI.warn}> · ⚠ work-map {workMapAlerts.length}</Text>
+                  ) : null}
                 </Text>
               </Box>
             ) : (
@@ -1048,6 +1053,7 @@ function MainScreen({
       )}
 
       {/* input */}
+      <Text> </Text>
       <CommandInput
         active={inputActive}
         placeholder={focus ? `Message ${focus} or /command` : t('main.prompt')}
@@ -1062,6 +1068,7 @@ function MainScreen({
         onEscape={onEscape}
         notify={notify}
       />
+      <Text> </Text>
       {/* ── Footer (1-2 conditional lines per §6.2) ── */}
       <Box flexDirection="column">
         <Text>
@@ -1078,6 +1085,12 @@ function MainScreen({
           ) : null}
           {ctl.approvals.length > 0 ? (
             <Text color={UI.warn}> · ⏳{ctl.approvals.length}</Text>
+          ) : null}
+          {workMapAlerts.length > 0 ? (
+            <Text color={conflictAlerts.length > 0 ? UI.danger : UI.warn}> · ⚠ /board</Text>
+          ) : null}
+          {conflictAlerts.length > 0 ? (
+            <Text color={UI.danger}> · run /review all</Text>
           ) : null}
           {focused ? (
             <Text color={BRAND.muted}> · 🎯 {focused.name}</Text>
@@ -1127,7 +1140,10 @@ function AgentHub({
         continue;
       }
       const needsSeparator = rows.length > 0;
-      const neededLines = 2 + (needsSeparator ? 1 : 0);
+      const summaryLines = agent.lastResult ? Math.min(4, Math.max(1, agent.lastResult.split('\n').filter((l) => l.trim()).length)) : 0;
+      const stepLines = !agent.lastResult && agent.progressSteps && agent.progressSteps.length > 0 ? Math.min(3, agent.progressSteps.length) : 0;
+      const agentLines = 1 + Math.max(summaryLines, agent.currentAction || agent.claims?.length ? 1 : 0) + stepLines;
+      const neededLines = agentLines + (needsSeparator ? 1 : 0);
       if (renderedLines + neededLines > visibleRows) {
         full = true;
         break;
@@ -1139,7 +1155,7 @@ function AgentHub({
         renderedLines++;
       }
       renderedAgents++;
-      renderedLines += 2;
+      renderedLines += agentLines;
       rows.push(
         <AgentRow key={agent.id} agent={agent} logs={ctl.board.logsFor(agent.id, 8)} cols={cols} />,
       );

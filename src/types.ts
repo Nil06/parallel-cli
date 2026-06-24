@@ -33,6 +33,23 @@ export interface AgentInfo {
   claims?: string[];
   /** Estimated context-window usage (0-100 %), updated after every model call. */
   ctxPct?: number;
+  /** User-facing progress checklist, Cursor-style. */
+  progressSteps?: AgentProgressStep[];
+  /** Lightweight performance counters for this agent run. */
+  perf?: AgentPerf;
+}
+
+export interface AgentProgressStep {
+  text: string;
+  status: 'pending' | 'active' | 'done';
+}
+
+export interface AgentPerf {
+  modelTurns: number;
+  toolCalls: number;
+  shellCommands: number;
+  shellMs: number;
+  readOnlyShellCommands: number;
 }
 
 export interface Note {
@@ -49,6 +66,7 @@ export interface FileActivity {
   agentId: string;
   agentName: string;
   op: 'write' | 'edit' | 'shell';
+  revision?: number;
   ts: number;
 }
 
@@ -59,6 +77,8 @@ export interface FileChange {
   path: string;
   before: string;
   after: string;
+  beforeRevision?: number;
+  afterRevision?: number;
   ts: number;
 }
 
@@ -184,6 +204,8 @@ export interface SessionData {
     specialist?: string;
     claims?: string[];
     ctxPct?: number;
+    progressSteps?: AgentProgressStep[];
+    perf?: AgentPerf;
     /** Path to the agent's full conversation (JSONL) — enables /restore. */
     conversation?: string;
   }[];

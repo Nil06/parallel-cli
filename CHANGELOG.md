@@ -2,6 +2,34 @@
 
 All notable changes to Parallel are documented here.
 
+## 0.4.7 - 2026-06-24
+
+### 0.4.7 Added
+
+- Added file revision safety for shared-tree co-editing so stale `write_file` retries and `edit_file` calls must re-read and merge concurrent work before mutating.
+- Added immediate agent-to-agent note nudging with duplicate-note suppression, active-agent checks, and rate-limit safeguards.
+- Added visible coordination signals in the Hub, `/board`, `/diff`, and timelines for claims, work-map warnings, notes, approvals, and questions.
+- Added `/review [agent|all] [prompt]`, a lightweight ask-mode reviewer that returns `APPROVE`, `REVISE`, or `BLOCK` with risks, tests to run, and files to inspect.
+- Added Cursor-style per-agent progress steps through `update_steps`, visible in the Hub and attached terminals.
+- Added batched read-only inspection tools (`read_many`, `inspect_project`) plus lightweight performance counters for model turns, tool calls, shell commands, and context usage.
+
+### 0.4.7 Changed
+
+- Reworked `/board` into a coordination surface with Work map warnings first, agent/path/time metadata, and suggestions to inspect `/focus` or `/diff`.
+- Prioritized incoming notes and work-map context in agent live context so coordination updates are handled before ordinary activity.
+- Updated product messaging around shared awareness: agents work like a live team on one working tree, not isolated background jobs.
+- Reworked agent rows to keep the Hub compact with cropped summaries, cream bullet recaps capped at four lines, mode badges, and visible `full /focus aN` plus `term /attach aN` shortcuts.
+- Reworked dedicated agent terminals with a launch header, hidden raw launch noise in normal mode, append-only final results, and a small live status region so native scrollback remains usable.
+- Tuned agent prompts by mode so `/ask`, `/task`, `/plan`, and `/review` use clearer contracts, early progress steps, batched inspection, and less redundant shell micro-commanding.
+
+### 0.4.7 Fixed
+
+- Fixed the previous collision retry weakness where a stale writer could receive an adaptation diff and then overwrite without a real re-read.
+- Fixed `edit_file` allowing targeted edits on a stale file as long as `old_string` still existed.
+- Fixed timeline narration being hardcoded in French by routing narration through i18n.
+- Fixed `claim_files` appearing as generic file activity instead of coordination activity.
+- Fixed completed attached terminals repainting large dynamic result panels that could trap mouse-wheel scroll at the top.
+
 ## 0.4.6 - 2026-06-24
 
 ### 0.4.6 Added

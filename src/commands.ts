@@ -5,7 +5,7 @@ import { Controller, normalizeShellApprovalMode } from './controller.js';
 import { createSkillTemplate, createSpecialistTemplate } from './skills.js';
 import { isLocalProvider, isPlaceholderModel, providerNeedsApiKey } from './config.js';
 import { t } from './i18n.js';
-import type { AgentMode } from './types.js';
+import type { AgentInfo, AgentMode, FileChange, WorkMapWarning } from './types.js';
 
 export type ViewName =
   | 'agents'
@@ -52,6 +52,7 @@ export const COMMANDS: CommandDef[] = [
   { name: '/ask', args: '[Name:] <question> [--model=m]', descKey: 'cmd.ask', group: 'modes', aliases: ['/a'] },
   { name: '/task', args: '[Name:] <task> [--model=m] [#skill]', descKey: 'cmd.task', group: 'modes', aliases: ['/t'] },
   { name: '/plan', args: '[Name:] <task> [--model=m]', descKey: 'cmd.plan', group: 'modes', aliases: ['/p'] },
+  { name: '/review', args: '[agent|all] [prompt]', descKey: 'cmd.review', group: 'modes' },
   { name: '/issue', args: '<n>', descKey: 'cmd.issue', group: 'git' },
   { name: '/specialist', args: '<name> <task> | new <name> [global]', descKey: 'cmd.specialist', group: 'modes' },
   { name: '/specialists', args: '', descKey: 'cmd.specialists', group: 'views' },
@@ -107,6 +108,7 @@ const COMMAND_PALETTE_PRIORITY = [
   '/ask',
   '/task',
   '/plan',
+  '/review',
   '/send',
   '/focus',
   '/attach',
@@ -225,6 +227,45 @@ function soloAgent(ctl: Controller): string | null {
   return list.length === 1 ? list[0].name : null;
 }
 
+export function buildReviewPrompt(
+  targetLabel: string,
+  customPrompt: string,
+  agents: AgentInfo[],
+  changes: FileChange[],
+  warnings: WorkMapWarning[],
+): string {
+  const files = [...new Set(changes.map((c) => c.path))].slice(0, 30);
+  const agentLines = agents.map((a) => `- ${a.name}${a.alias !== a.name ? ` (${a.alias})` : ''} [${a.state}] ${a.task}`).join('\n') || '- no target agent';
+  const fileLines = files.map((f) => `- ${f}`).join('\n') || '- no tracked file changes yet; inspect git status/read relevant files';
+  const warningLines =
+    warnings.map((w) => `- ${w.level.toUpperCase()}: ${w.title} (${w.paths.join(', ') || 'no path'}) ${w.detail}`).join('\n') || '- none';
+  return `Review target: ${targetLabel}
+${customPrompt ? `Extra reviewer instruction: ${customPrompt}\n` : ''}
+You are a lightweight reviewer running in ask mode. Do not edit files and do not gate the whole session.
+
+Target agents:
+${agentLines}
+
+Tracked files to inspect:
+${fileLines}
+
+Coordination warnings:
+${warningLines}
+
+Review the current working tree and recent coordination context. Inspect the files that matter before deciding. Focus on bugs, regressions, broken contracts between agents, missing validation, and unsafe concurrent edits.
+
+Return exactly this structure:
+Verdict: APPROVE | REVISE | BLOCK
+Risks:
+- concrete risk or "none"
+Tests to run:
+- exact command or manual check
+Files to inspect:
+- path and why
+Notes:
+- short reviewer guidance for the user and agents`;
+}
+
 function spawnFrom(
   arg: string,
   ctl: Controller,
@@ -339,6 +380,25 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       // before touching any file.
       if (!arg) return ui.system(t('m.usagePlan'), 'warn');
       spawnFrom(arg, ctl, ui, images, undefined, 'plan');
+      return;
+    }
+    case '/review': {
+      const [maybeTarget, ...promptParts] = rest;
+      const targetInfo = maybeTarget && maybeTarget.toLowerCase() !== 'all' ? ctl.board.getAgentByName(maybeTarget) : undefined;
+      const hasExplicitTarget = Boolean(maybeTarget && (maybeTarget.toLowerCase() === 'all' || targetInfo));
+      const target = hasExplicitTarget && maybeTarget ? maybeTarget : 'all';
+      const customPrompt = hasExplicitTarget ? promptParts.join(' ').trim() : arg;
+      if (target !== 'all' && !targetInfo) return ui.system(t('m.notFound', { target, list: agentList(ctl) }), 'error');
+      const agents = target === 'all' ? [...ctl.board.agents.values()] : targetInfo ? [targetInfo] : [];
+      const ids = new Set(agents.map((a) => a.id));
+      const names = new Set(agents.map((a) => a.name));
+      const changes = target === 'all' ? ctl.board.changes : ctl.board.changes.filter((c) => ids.has(c.agentId));
+      const warnings =
+        target === 'all'
+          ? ctl.board.workMapWarnings
+          : ctl.board.workMapWarnings.filter((w) => w.agentNames.some((name) => names.has(name)) || w.paths.some((p) => changes.some((c) => c.path === p)));
+      const reviewTarget = target === 'all' ? 'all agents' : `${targetInfo?.name ?? target}`;
+      spawnFrom(`Reviewer: ${buildReviewPrompt(reviewTarget, customPrompt, agents, changes, warnings)}`, ctl, ui, images, undefined, 'ask');
       return;
     }
     case '/issue': {

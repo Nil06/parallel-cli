@@ -75,6 +75,7 @@ export class Controller extends EventEmitter {
   sessionName: string | undefined;
   /** Conversation JSONL path per agent id — what makes /restore possible. */
   private conversationFiles = new Map<string, string>();
+  private noteNudgeLast = new Map<string, number>();
   /** The session restored at startup (source of /restore conversations). */
   loadedSession: SessionData | null = null;
   private sessionOnlyProvider: ProviderConfig | null = null;
@@ -94,16 +95,7 @@ export class Controller extends EventEmitter {
     };
     this.board.on('update', () => this.emit('update'));
     this.board.on('agent-event', (ev: any) => this.onAgentEvent(ev));
-    // Only the USER interrupts an agent's in-flight model call (steering).
-    // Agent→agent notes never cut each other off: they are injected at the
-    // recipient's NEXT step, together with the live snapshot + diffs — agents
-    // adapt at action boundaries, they don't interrupt one another.
-    this.board.on('note', (note: Note) => {
-      if (note.to === 'all' || note.to === 'user') return;
-      if (note.from !== 'user') return;
-      const target = this.findAgent(note.to);
-      if (target) target.nudge();
-    });
+    this.board.on('note', (note: Note) => this.nudgeFromNote(note));
     // Autosave: the session (+ conversations, written live by agents) survives a crash.
     const autosave = setInterval(() => this.saveSession(), 30_000);
     autosave.unref();
@@ -190,6 +182,26 @@ export class Controller extends EventEmitter {
   private bell(times: number): void {
     for (let i = 0; i < times; i++) {
       setTimeout(() => process.stdout.write(''), i * 250);
+    }
+  }
+
+  private nudgeFromNote(note: Note): void {
+    if (note.to === 'user' || note.from === 'system') return;
+    const recipients =
+      note.to === 'all'
+        ? [...this.board.agents.values()].filter((a) => a.name.toLowerCase() !== note.from.toLowerCase())
+        : [this.board.getAgentByName(note.to)].filter((a): a is NonNullable<typeof a> => Boolean(a));
+    const active = recipients.filter((a) => !['done', 'error', 'stopped'].includes(a.state));
+    for (const info of active) {
+      const agent = this.agents.get(info.id);
+      if (!agent) continue;
+      const now = Date.now();
+      const key = `${info.id}:${note.from.toLowerCase()}`;
+      const rateLimitMs = note.from === 'user' ? 0 : 1500;
+      if (rateLimitMs > 0 && now - (this.noteNudgeLast.get(key) ?? 0) < rateLimitMs) continue;
+      if (agent.nudge(`reading team update from ${note.from}`)) {
+        this.noteNudgeLast.set(key, now);
+      }
     }
   }
 

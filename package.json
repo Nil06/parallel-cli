@@ -1,7 +1,7 @@
 {
   "name": "@parallel-cli/parallel",
-  "version": "0.4.6",
-  "description": "Real-time multi-agent coding CLI with shared context, adaptive co-editing, dedicated agent terminals, and headless CI runs.",
+  "version": "0.4.7",
+  "description": "Real-time coding agents that work like a live team on one shared repository.",
   "keywords": [
     "cli",
     "ai",

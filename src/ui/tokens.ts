@@ -57,11 +57,11 @@ export const STATE = {
   idle: 'gray',
 } as const;
 
-/** Mode indicator colors. `task` is undefined — it renders no mark. */
+/** Mode indicator colors. */
 export const MODE = {
   ask: 'yellow',
   plan: COLOR.creamMuted,
-  task: undefined,
+  task: COLOR.cream,
 } as const;
 
 /** Chrome / UI element colors. */

@@ -4,7 +4,7 @@ import { exec } from 'node:child_process';
 import * as Diff from 'diff';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { Blackboard } from '../coordination/blackboard.js';
-import type { AgentMode, Skill } from '../types.js';
+import type { AgentMode, AgentProgressStep, Skill } from '../types.js';
 
 const IGNORED = new Set(['node_modules', '.git', '.parallel', '.cursor', 'dist', '__pycache__', '.venv', 'venv']);
 const MAX_OUTPUT = 12_000;
@@ -46,6 +46,25 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
           path: { type: 'string', description: 'Relative file path' },
         },
         required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_many',
+      description:
+        'Read several known files in one tool call. Use this instead of many sequential read_file calls when the files are independent. Max 8 files.',
+      parameters: {
+        type: 'object',
+        properties: {
+          paths: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Relative file paths to read',
+          },
+        },
+        required: ['paths'],
       },
     },
   },
@@ -100,6 +119,29 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'inspect_project',
+      description:
+        'Batch read-only inspection: list files under paths and/or run several regex searches in one call. Prefer this over cascades of grep/head/tail/wc/awk for exploratory checks.',
+      parameters: {
+        type: 'object',
+        properties: {
+          paths: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Folders or files to inspect, default ["."], max 5',
+          },
+          patterns: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Regex patterns to search, max 5',
+          },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'run_command',
       description:
         'Run a shell command at the project root (tests, build, install...). May require user approval. 120s timeout.',
@@ -140,6 +182,33 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
           status: { type: 'string', description: 'Short description of your current action' },
         },
         required: ['status'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_steps',
+      description:
+        'Update the visible Cursor-style task checklist. At task start create 3-6 concrete steps; during work keep exactly one active step and mark completed steps done.',
+      parameters: {
+        type: 'object',
+        properties: {
+          steps: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 6,
+            items: {
+              type: 'object',
+              properties: {
+                text: { type: 'string' },
+                status: { type: 'string', enum: ['pending', 'active', 'done'] },
+              },
+              required: ['text', 'status'],
+            },
+          },
+        },
+        required: ['steps'],
       },
     },
   },
@@ -257,9 +326,14 @@ export type QuestionCallback = (
   recommended: number,
 ) => Promise<{ answer: string; auto: boolean }>;
 
+interface FileReadBaseline {
+  content: string;
+  revision: number;
+}
+
 export class ToolExecutor {
   /** Last content this agent has seen for each file — basis of adaptive merging. */
-  private lastRead = new Map<string, string>();
+  private lastRead = new Map<string, FileReadBaseline>();
   /** Questions already asked — capped at 3 per task. */
   private questionsAsked = 0;
   private planApproved = false;
@@ -287,6 +361,26 @@ export class ToolExecutor {
 
   private relOf(p: string): string {
     return path.relative(this.projectRoot, this.resolve(p)) || '.';
+  }
+
+  private rememberRead(relPath: string, content: string): void {
+    this.lastRead.set(relPath, { content, revision: this.board.fileRevision(relPath) });
+  }
+
+  private adaptationMessage(relPath: string, seen: FileReadBaseline, current: string, verb = 'was modified'): string {
+    this.board.recordConflict(relPath);
+    const who = this.board.fileActivity.get(relPath);
+    const author = who && who.agentId !== this.agentId ? who.agentName : 'another agent or a shell command';
+    const patch = Diff.createPatch(relPath, seen.content, current, `your read version r${seen.revision}`, `current version r${this.board.fileRevision(relPath)}`, {
+      context: 2,
+    });
+    const excerpt = patch.split('\n').slice(4, 40).join('\n');
+    return (
+      `REAL-TIME ADAPTATION: ${relPath} ${verb} by ${author} after your last read. ` +
+      `Here are THEIR changes (to KEEP, do not erase them):\n${excerpt}\n` +
+      `Call read_file on ${relPath} before editing or rewriting it, then merge your change on top of the current version. ` +
+      `If your work conflicts, send them a note.`
+    );
   }
 
   private snapshotProject(): Map<string, string> {
@@ -346,12 +440,16 @@ export class ToolExecutor {
           return this.listFiles(args?.path ?? '.');
         case 'read_file':
           return this.readFile(args.path);
+        case 'read_many':
+          return this.readMany(args.paths);
         case 'write_file':
           return this.writeFile(args.path, args.content);
         case 'edit_file':
           return this.editFile(args.path, args.old_string, args.new_string);
         case 'search':
           return this.search(args.pattern, args?.path ?? '.');
+        case 'inspect_project':
+          return this.inspectProject(args);
         case 'run_command':
           return await this.runCommand(args.command);
         case 'post_note':
@@ -360,6 +458,8 @@ export class ToolExecutor {
         case 'update_status':
           this.board.updateAgent(this.agentId, { currentAction: String(args.status ?? '') });
           return 'Status updated, visible to the other agents.';
+        case 'update_steps':
+          return this.updateSteps(args);
         case 'ask_user':
           return await this.askUser(args);
         case 'load_skill':
@@ -486,6 +586,23 @@ export class ToolExecutor {
     return `[SKILL: ${skill.name}] (${skill.scope})\n${skill.body}\n[END SKILL — follow these instructions for the rest of your task]`;
   }
 
+  private updateSteps(args: any): string {
+    const raw = Array.isArray(args.steps) ? args.steps : [];
+    const steps: AgentProgressStep[] = raw
+      .slice(0, 6)
+      .map((s: any) => ({
+        text: String(s?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 100),
+        status: s?.status === 'done' || s?.status === 'active' ? s.status : 'pending',
+      }))
+      .filter((s: AgentProgressStep) => s.text.length > 0);
+    if (steps.length === 0) return 'ERROR: update_steps needs 1-6 non-empty steps.';
+    const activeCount = steps.filter((s) => s.status === 'active').length;
+    if (activeCount > 1) return 'ERROR: update_steps must have at most one active step.';
+    this.board.updateAgent(this.agentId, { progressSteps: steps });
+    this.board.log(this.agentId, 'tool', `☑ steps ${steps.filter((s) => s.status === 'done').length}/${steps.length}`);
+    return `Visible steps updated (${steps.length} step${steps.length === 1 ? '' : 's'}).`;
+  }
+
   private listFiles(rel: string): string {
     const root = this.resolve(rel);
     const out: string[] = [];
@@ -520,13 +637,39 @@ export class ToolExecutor {
 
   private readFile(rel: string): string {
     const abs = this.resolve(rel);
+    const relPath = this.relOf(rel);
     const content = fs.readFileSync(abs, 'utf8');
-    this.lastRead.set(this.relOf(rel), content);
+    this.rememberRead(relPath, content);
+    this.board.resolveConflict(relPath);
     const lines = content.split('\n');
     const numbered = lines.map((l, i) => `${String(i + 1).padStart(4)}|${l}`).join('\n');
     return numbered.length > MAX_OUTPUT
       ? numbered.slice(0, MAX_OUTPUT) + `\n... (truncated, ${lines.length} lines total)`
       : numbered;
+  }
+
+  private readMany(paths: any): string {
+    const relPaths = Array.isArray(paths) ? paths.map((p: any) => String(p)).slice(0, 8) : [];
+    if (relPaths.length === 0) return 'ERROR: read_many needs 1-8 paths.';
+    const chunks: string[] = [];
+    for (const rel of relPaths) {
+      try {
+        const abs = this.resolve(rel);
+        const relPath = this.relOf(rel);
+        const content = fs.readFileSync(abs, 'utf8');
+        this.rememberRead(relPath, content);
+        this.board.resolveConflict(relPath);
+        const lines = content.split('\n');
+        const numbered = lines.map((l, i) => `${String(i + 1).padStart(4)}|${l}`).join('\n');
+        const body = numbered.length > Math.floor(MAX_OUTPUT / relPaths.length)
+          ? numbered.slice(0, Math.floor(MAX_OUTPUT / relPaths.length)) + `\n... (truncated, ${lines.length} lines total)`
+          : numbered;
+        chunks.push(`--- ${relPath} (${lines.length} lines) ---\n${body}`);
+      } catch (err: any) {
+        chunks.push(`--- ${rel} ---\nERROR: ${err?.message ?? String(err)}`);
+      }
+    }
+    return chunks.join('\n\n');
   }
 
   /**
@@ -539,9 +682,9 @@ export class ToolExecutor {
     const abs = this.resolve(rel);
     const exists = fs.existsSync(abs);
     const seen = this.lastRead.get(relPath);
+    const current = exists ? fs.readFileSync(abs, 'utf8') : '';
 
     if (exists) {
-      const current = fs.readFileSync(abs, 'utf8');
       if (seen === undefined) {
         const who = this.board.fileActivity.get(relPath);
         return (
@@ -549,29 +692,17 @@ export class ToolExecutor {
           `Read it first (read_file) so you don't erase any work, then rewrite while integrating what exists.`
         );
       }
-      if (current !== seen) {
-        this.lastRead.set(relPath, current); // sync view so next write passes
-        this.board.recordConflict(relPath); // repeated collisions escalate to the user
-        const who = this.board.fileActivity.get(relPath);
-        const author = who && who.agentId !== this.agentId ? who.agentName : 'another agent';
-        const patch = Diff.createPatch(relPath, seen, current, 'your read version', 'current version', {
-          context: 2,
-        });
-        const excerpt = patch.split('\n').slice(4, 40).join('\n');
-        return (
-          `REAL-TIME ADAPTATION: ${relPath} was modified by ${author} while you were working. ` +
-          `Here are THEIR changes (to KEEP, do not erase them):\n${excerpt}\n` +
-          `Your view is now synchronized. Rewrite the file by MERGING your changes with theirs ` +
-          `(or use edit_file for targeted changes). If your work conflicts, send them a note.`
-        );
+      if (current !== seen.content || this.board.fileRevision(relPath) !== seen.revision) {
+        return this.adaptationMessage(relPath, seen, current);
       }
     }
 
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
-    this.lastRead.set(relPath, content);
-    const before = exists ? (seen ?? '') : '';
+    const before = exists ? current : '';
     this.board.addChange(this.agentId, relPath, before, content);
+    this.rememberRead(relPath, content);
+    this.board.resolveConflict(relPath);
     this.board.recordActivity(relPath, this.agentId, 'write');
     this.board.log(this.agentId, 'tool', `✏ write ${relPath} (${content.length}B)`);
     return `File written: ${relPath} (${content.split('\n').length} lines). The other agents see your diff in real time.`;
@@ -581,11 +712,21 @@ export class ToolExecutor {
     const relPath = this.relOf(rel);
     const abs = this.resolve(rel);
     const before = fs.readFileSync(abs, 'utf8');
+    const seen = this.lastRead.get(relPath);
+    if (seen === undefined) {
+      const who = this.board.fileActivity.get(relPath);
+      return (
+        `WARNING: ${relPath} has not been read by you yet${who && who.agentId !== this.agentId ? ` and agent ${who.agentName} touched it recently` : ''}. ` +
+        `Call read_file first so your targeted edit is based on the current version.`
+      );
+    }
+    if (before !== seen.content || this.board.fileRevision(relPath) !== seen.revision) {
+      return this.adaptationMessage(relPath, seen, before, 'changed');
+    }
     const count = before.split(oldStr).length - 1;
     if (count === 0) {
-      const seen = this.lastRead.get(relPath);
       const who = this.board.fileActivity.get(relPath);
-      const collided = seen !== undefined && seen !== before && who && who.agentId !== this.agentId;
+      const collided = who && who.agentId !== this.agentId;
       if (collided) this.board.recordConflict(relPath);
       const hint = collided
         ? ` The file was modified by ${who.agentName} in the meantime — re-read it (read_file) to see its current version and adapt your edit.`
@@ -597,8 +738,9 @@ export class ToolExecutor {
     }
     const after = before.replace(oldStr, newStr);
     fs.writeFileSync(abs, after);
-    this.lastRead.set(relPath, after);
     this.board.addChange(this.agentId, relPath, before, after);
+    this.rememberRead(relPath, after);
+    this.board.resolveConflict(relPath);
     this.board.recordActivity(relPath, this.agentId, 'edit');
     this.board.log(this.agentId, 'tool', `✏ edit ${relPath}`);
     return `File modified: ${relPath}. The other agents see your diff in real time.`;
@@ -646,6 +788,63 @@ export class ToolExecutor {
     };
     walk(root, 0);
     return results.length > 0 ? results.join('\n') : 'No results.';
+  }
+
+  private inspectProject(args: any): string {
+    const paths = Array.isArray(args?.paths) && args.paths.length > 0 ? args.paths.map((p: any) => String(p)).slice(0, 5) : ['.'];
+    const patterns = Array.isArray(args?.patterns) ? args.patterns.map((p: any) => String(p)).filter(Boolean).slice(0, 5) : [];
+    const files: string[] = [];
+    const matches: string[] = [];
+    const regexes: Array<{ raw: string; re: RegExp }> = [];
+    for (const raw of patterns) {
+      try {
+        regexes.push({ raw, re: new RegExp(raw) });
+      } catch {
+        matches.push(`INVALID REGEX: ${raw}`);
+      }
+    }
+    const visit = (full: string, depth: number) => {
+      if (depth > 5 || files.length > 400 || matches.length > 200) return;
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(full);
+      } catch {
+        return;
+      }
+      if (stat.isDirectory()) {
+        let entries: fs.Dirent[];
+        try {
+          entries = fs.readdirSync(full, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const e of entries) {
+          if (IGNORED.has(e.name) || e.name.startsWith('.git')) continue;
+          visit(path.join(full, e.name), depth + 1);
+        }
+        return;
+      }
+      if (!stat.isFile() || stat.size > 1_000_000) return;
+      const relPath = path.relative(this.projectRoot, full);
+      files.push(`${relPath} (${stat.size}B)`);
+      if (regexes.length === 0) return;
+      let content = '';
+      try {
+        content = fs.readFileSync(full, 'utf8');
+      } catch {
+        return;
+      }
+      const lines = content.split('\n');
+      for (let i = 0; i < lines.length && matches.length <= 200; i++) {
+        for (const { raw, re } of regexes) {
+          if (re.test(lines[i])) matches.push(`${raw} :: ${relPath}:${i + 1}: ${lines[i].trim().slice(0, 140)}`);
+        }
+      }
+    };
+    for (const rel of paths) visit(this.resolve(rel), 0);
+    const fileBlock = files.length > 0 ? files.slice(0, 80).join('\n') : '(no files)';
+    const matchBlock = patterns.length > 0 ? (matches.length > 0 ? matches.slice(0, 120).join('\n') : 'No matches.') : '(no patterns requested)';
+    return `FILES (${files.length} found, first ${Math.min(files.length, 80)} shown)\n${fileBlock}\n\nMATCHES\n${matchBlock}`;
   }
 
   private async runCommand(command: string): Promise<string> {

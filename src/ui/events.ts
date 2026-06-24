@@ -1,5 +1,6 @@
 import type { AgentInfo, LogEntry } from '../types.js';
 import { oneLine } from './tokens.js';
+import { t } from '../i18n.js';
 
 export type UIEventKind =
   | 'thought'
@@ -11,6 +12,7 @@ export type UIEventKind =
   | 'question'
   | 'result'
   | 'error'
+  | 'intent'
   | 'note'
   | 'system';
 
@@ -47,7 +49,7 @@ export interface TimelineOptions {
 
 function cleanToolText(text: string): string {
   return oneLine(text)
-    .replace(/^[📖📁🔍✏🚩🧠🧩📢⏳❓✉✅↳]+\s*/u, '')
+    .replace(/^[📖📁🔍🔎📚✏🚩🧠🧩📢☑⏳❓✉✅↳]+\s*/u, '')
     .trim();
 }
 
@@ -65,6 +67,12 @@ function classify(log: LogEntry): UIEvent {
   if (log.kind === 'error') return { agentId: log.agentId, kind: 'error', label: 'error', detail: text, ts: log.ts, seq: log.seq };
   if (log.kind === 'tool_result') {
     return { agentId: log.agentId, kind: 'command_output', label: 'output', detail: log.text.trim(), ts: log.ts, seq: log.seq };
+  }
+  if (log.kind === 'tool' && /^\s*📢/u.test(log.text)) {
+    return { agentId: log.agentId, kind: 'intent', label: 'next', detail: cleaned || text, ts: log.ts, seq: log.seq };
+  }
+  if (log.kind === 'tool' && /^\s*☑/u.test(log.text)) {
+    return { agentId: log.agentId, kind: 'note', label: 'steps', detail: cleaned || text, ts: log.ts, seq: log.seq };
   }
   if (log.kind === 'note') return { agentId: log.agentId, kind: 'note', label: 'note', detail: cleaned || text, ts: log.ts, seq: log.seq };
   if (log.kind === 'system') return { agentId: log.agentId, kind: 'system', label: 'system', detail: cleaned || text, ts: log.ts, seq: log.seq };
@@ -88,8 +96,14 @@ function classify(log: LogEntry): UIEvent {
   if (/^(search)\s+/i.test(cleaned)) {
     return { agentId: log.agentId, kind: 'file', label: 'search', detail: cleaned.replace(/^search\s+/i, ''), ts: log.ts, seq: log.seq };
   }
-  if (/^(write|edit|patch|claim|claims?)\s+/i.test(cleaned)) {
-    const label = lower.startsWith('claim') ? 'claim' : lower.startsWith('write') ? 'write' : 'edit';
+  if (/^inspect project/i.test(cleaned)) {
+    return { agentId: log.agentId, kind: 'file', label: 'search', detail: 'project', ts: log.ts, seq: log.seq };
+  }
+  if (/^(claim|claims?):?\s+/i.test(cleaned)) {
+    return { agentId: log.agentId, kind: 'note', label: 'claim', detail: cleaned.replace(/^(claim|claims?):?\s*/i, ''), ts: log.ts, seq: log.seq };
+  }
+  if (/^(write|edit|patch)\s+/i.test(cleaned)) {
+    const label = lower.startsWith('write') ? 'write' : 'edit';
     return { agentId: log.agentId, kind: 'file', label, detail: cleaned.replace(/^(write|edit|patch|claim|claims?)\s*/i, ''), ts: log.ts, seq: log.seq };
   }
   if (/^(run|exec|shell|npm|pnpm|yarn|git|node|npx)\b/i.test(cleaned)) {
@@ -147,6 +161,7 @@ function commandCategory(command: string): TimelineCategory {
 function categoryFor(e: UIEvent): TimelineCategory {
   if (e.kind === 'error') return 'result';
   if (e.kind === 'note' || e.kind === 'approval' || e.kind === 'question') return 'coordinate';
+  if (e.kind === 'intent') return 'other';
   if (e.kind === 'file') {
     if (e.label === 'write' || e.label === 'edit' || e.label === 'claim') return 'change';
     return 'inspect';
@@ -183,14 +198,8 @@ export function summarizeCommandOutput(output: string, command = '', maxLines = 
 }
 
 function narrationFor(category: TimelineCategory, previous?: TimelineCategory): string {
-  if (category === 'inspect' && previous === 'validate') return 'Cette piste ne suffit pas, donc je reviens inspecter le projet pour confirmer l’état réel.';
-  if (category === 'inspect') return 'Je vérifie l’état du projet et les fichiers concernés avant de conclure.';
-  if (category === 'change') return 'Je modifie maintenant les fichiers ciblés en gardant le changement aussi petit que possible.';
-  if (category === 'validate') return 'Je lance les validations locales pour vérifier que les changements tiennent techniquement.';
-  if (category === 'publish') return 'Je prépare la synchronisation Git après avoir vérifié l’état local.';
-  if (category === 'coordinate') return 'Je traite les échanges et les décisions nécessaires pour avancer proprement.';
-  if (category === 'result') return 'Je vérifie le résultat final et les éventuelles erreurs importantes.';
-  return 'Je poursuis l’activité en cours.';
+  if (category === 'inspect' && previous === 'validate') return t('timeline.narration.inspectAfterValidate');
+  return t(`timeline.narration.${category}`);
 }
 
 function pushSection(out: TimelineItem[], category: TimelineCategory, ts: number, seq?: number): void {

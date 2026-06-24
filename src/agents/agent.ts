@@ -7,7 +7,7 @@ import { ToolExecutor, TOOL_DEFINITIONS, ApprovalCallback, QuestionCallback } fr
 import { costOf } from '../pricing.js';
 import { skillsCatalog } from '../skills.js';
 import { getLang, LANG_NAME_EN } from '../i18n.js';
-import type { AgentInfo, AgentMode, ModelPrice, Skill, Specialist } from '../types.js';
+import type { AgentInfo, AgentMode, AgentPerf, ModelPrice, Skill, Specialist } from '../types.js';
 
 // Agent-facing prompts stay in English (canonical for models). Only notes
 // addressed to the user follow the configured UI language.
@@ -35,12 +35,14 @@ ${
   mode === 'ask'
     ? `ASK MODE:
 - You are advisory only. Do not modify files.
-- You may inspect with list_files/read_file/search and safe read-only commands when useful.
+- Prefer search/read_file/read_many/inspect_project over shell. Use safe read-only commands only when internal tools are insufficient.
+- Keep the investigation short and targeted. Do not run heavy validation loops unless the user explicitly asks.
 - Do not run mutating commands, write files, edit files, claim files, or commit.
 - Finish with task_complete using this user-facing structure in ${userLang}: "Réponse courte", "Recommandation", "Pourquoi", "Prochaines étapes".`
     : mode === 'plan'
       ? `PLAN MODE:
 - Explore first with read-only tools.
+- Batch independent reads/searches with read_many or inspect_project. Keep exploration broad enough to be correct but bounded.
 - Before modifying any file or running mutating commands, call ask_user with a concrete implementation plan.
 - The plan must include steps, files you expect to touch, risks, and validation.
 - Use options ["Approve", "Revise"], recommended "Revise" so timeout never approves changes.
@@ -48,7 +50,8 @@ ${
 - Finish with task_complete using this user-facing structure in ${userLang}: "Plan appliqué", "Ce que j’ai modifié", "Validation", "Risques restants".`
       : `TASK MODE:
 - Execute the user's objective end-to-end.
-- Explore, edit, validate, and summarize.
+- Use this loop: create visible steps, batch inspect, act, batch validate, summarize.
+- If the task is a verification/audit and the correct outcome is no file changes, that is valid task work. Say explicitly in task_complete that no modification was necessary and why.
 - Ask the user only when blocked or when a risky product decision cannot be inferred.
 - Finish with task_complete using this user-facing structure in ${userLang}: "Ce que j’ai fait", "Ce que j’ai vérifié", "Résultat", "Détails techniques".`
 }
@@ -80,13 +83,16 @@ PARALLEL'S PHILOSOPHY — REAL-TIME CO-EDITING, NEVER ANY BLOCKING:
 8. MAKE THE SHARED AWARENESS VISIBLE: when another agent's work influenced a decision of yours (you reused their function, adapted to their diff, avoided their work area), SAY IT explicitly — in a post_note to them ("I saw you changed X, so I did Y") and in your task_complete summary (name the agent and what you built on). The user must be able to SEE that you worked as a team, not as isolated bots.
 
 WORK METHOD:
-- Explore first (list_files, read_file, search) before modifying.
+- For non-trivial work, call update_steps early with 3-6 concrete steps. Keep exactly one step active and mark steps done as you complete them.
+- Explore first before modifying. Decide all independent reads/searches you need, then batch them with read_many or inspect_project instead of calling tools one by one.
+- Use run_command for builds/tests/validation and genuinely useful shell scripts. Do NOT spend many turns running grep/head/tail/wc/awk cascades; batch independent shell checks into one labelled command or use inspect_project.
 - Declare your work area with claim_files when you start (and when it changes): it prevents collisions without ever locking anything.
 - If you discover a durable, non-obvious fact about the project (convention, decision, pitfall), save it with remember(fact) for future agents.
 - wait_for_agent exists for hard dependencies only — prefer progressing on another part of your task over waiting.
 - Prefer edit_file (targeted changes) over write_file (full rewrite): targeted edits coexist better in parallel.
 - Make minimal changes; do not rewrite what already works.
 - Verify your work when relevant (run_command for tests/build), then finish with task_complete.
+- Performance discipline: minimize model turns. If multiple tool calls are independent, make them in the same assistant turn. If several shell checks are independent, run one labelled command.
 - The task_complete summary is user-facing. Make it structured and specific in ${userLang}, not just "done":
   1. What I did — concrete outcome in 1-2 sentences.
   2. Files changed or inspected — mention paths when relevant.
@@ -130,6 +136,32 @@ export interface AgentOptions {
 /** Assumed context window (tokens) when the provider does not advertise one. */
 const CONTEXT_WINDOW = 128_000;
 
+const EMPTY_PERF: AgentPerf = {
+  modelTurns: 0,
+  toolCalls: 0,
+  shellCommands: 0,
+  shellMs: 0,
+  readOnlyShellCommands: 0,
+};
+
+function noChangeTaskLine(): string {
+  switch (getLang()) {
+    case 'fr':
+      return 'Mode task: vérification sans changement de fichier nécessaire.';
+    case 'es':
+      return 'Modo task: verificación sin cambios de archivos necesarios.';
+    case 'zh':
+      return 'Task 模式：已完成验证，无需修改文件。';
+    case 'en':
+    default:
+      return 'Task mode: verification completed with no file changes needed.';
+  }
+}
+
+function isReadOnlyShell(command: string): boolean {
+  return /\b(grep|rg|head|tail|wc|awk|sed|cat|ls|find)\b/.test(command) && !/[>|;]/.test(command);
+}
+
 export class Agent {
   readonly id: string;
   readonly name: string;
@@ -143,6 +175,7 @@ export class Agent {
   private stopped = false;
   private lastNoteId = 0;
   private lastChangeId = 0;
+  private readOnlyShellStreak = 0;
 
   constructor(private opts: AgentOptions) {
     this.id = opts.id;
@@ -177,6 +210,8 @@ export class Agent {
       cost: opts.price ? 0 : null,
       startedAt: Date.now(),
       specialist: opts.specialist?.name,
+      progressSteps: [],
+      perf: { ...EMPTY_PERF },
     };
     this.board.registerAgent(info);
     // Skip notes/changes that existed before this agent was born
@@ -236,9 +271,12 @@ export class Agent {
    * A note addressed to this agent just arrived: interrupt the current model
    * call so the next turn (which injects unread notes) starts immediately.
    */
-  nudge(): void {
+  nudge(reason = 'reading team update'): boolean {
+    if (this.finished || this.stopped || this.paused) return false;
     this.steered = true;
+    this.board.setAgentState(this.id, 'listening', reason);
     this.llmAbort?.abort();
+    return true;
   }
 
   /**
@@ -262,6 +300,19 @@ export class Agent {
     }
   }
 
+  private updatePerf(delta: Partial<AgentPerf>): void {
+    const current = this.board.agents.get(this.id)?.perf ?? EMPTY_PERF;
+    this.board.updateAgent(this.id, {
+      perf: {
+        modelTurns: current.modelTurns + (delta.modelTurns ?? 0),
+        toolCalls: current.toolCalls + (delta.toolCalls ?? 0),
+        shellCommands: current.shellCommands + (delta.shellCommands ?? 0),
+        shellMs: current.shellMs + (delta.shellMs ?? 0),
+        readOnlyShellCommands: current.readOnlyShellCommands + (delta.readOnlyShellCommands ?? 0),
+      },
+    });
+  }
+
   /**
    * Build the live context injected before EVERY model call:
    * other agents' status + their fresh diffs + unread notes.
@@ -270,6 +321,16 @@ export class Agent {
   private liveContext(): { text: string; hasNews: boolean } {
     let hasNews = false;
     const parts: string[] = ['[REAL TIME]', this.board.snapshotFor(this.id)];
+
+    const notes = this.board.notesFor(this.name, this.lastNoteId);
+    if (notes.length > 0) {
+      this.lastNoteId = notes[notes.length - 1].id;
+      hasNews = true;
+      parts.push('\n[PRIORITY NOTES RECEIVED — take them into account now]');
+      for (const n of notes) {
+        parts.push(`  • from ${n.from}: ${n.content}`);
+      }
+    }
 
     const changes = this.board.changesSince(this.id, this.lastChangeId);
     if (changes.length > 0) {
@@ -293,16 +354,6 @@ export class Agent {
       parts.push(
         'Analyze these diffs: if any of them touches your work area, re-read the affected file and adapt. NEVER undo these changes.',
       );
-    }
-
-    const notes = this.board.notesFor(this.name, this.lastNoteId);
-    if (notes.length > 0) {
-      this.lastNoteId = notes[notes.length - 1].id;
-      hasNews = true;
-      parts.push('\n[NOTES RECEIVED — take them into account now]');
-      for (const n of notes) {
-        parts.push(`  • from ${n.from}: ${n.content}`);
-      }
     }
 
     parts.push('\nContinue your task taking the above into account. Use tools, or task_complete if finished.');
@@ -408,6 +459,7 @@ export class Agent {
           this.llmAbort = null;
         }
         this.steered = false;
+        this.updatePerf({ modelTurns: 1 });
         const a = this.board.agents.get(this.id);
         if (a) {
           // Real-time financial view: accrue the cost of this round immediately.
@@ -467,12 +519,42 @@ export class Agent {
           }
           this.board.updateAgent(this.id, { currentAction: label.slice(0, 80) });
 
+          const shellStartedAt = tc.function.name === 'run_command' ? Date.now() : 0;
           const result = await this.executor.execute(tc.function.name, args);
+          const shellMs = shellStartedAt ? Date.now() - shellStartedAt : 0;
+          const readOnlyShell = tc.function.name === 'run_command' && isReadOnlyShell(String(args.command ?? ''));
+          this.updatePerf({
+            toolCalls: 1,
+            shellCommands: tc.function.name === 'run_command' ? 1 : 0,
+            shellMs,
+            readOnlyShellCommands: readOnlyShell ? 1 : 0,
+          });
+          if (readOnlyShell) {
+            this.readOnlyShellStreak++;
+            if (this.readOnlyShellStreak >= 3) {
+              this.record({
+                role: 'user',
+                content:
+                  '[PERFORMANCE CORRECTION] You are using several read-only shell micro-commands. Batch the next inspection with read_many/inspect_project or a single labelled shell command, then continue.',
+              });
+              this.readOnlyShellStreak = 0;
+            }
+          } else if (tc.function.name !== 'update_status' && tc.function.name !== 'update_steps') {
+            this.readOnlyShellStreak = 0;
+          }
 
           if (result === '__TASK_COMPLETE__') {
             completed = true;
             const summary = String(args.summary ?? 'Task complete.');
-            this.board.updateAgent(this.id, { lastResult: summary });
+            const changedByThisAgent = this.board.changes.filter((c) => c.agentId === this.id).length;
+            const noChangePrefix =
+              this.opts.mode === 'task' && changedByThisAgent === 0
+                ? `${noChangeTaskLine()}\n\n`
+                : '';
+            this.board.updateAgent(this.id, {
+              lastResult: `${noChangePrefix}${summary}`,
+              progressSteps: (this.board.agents.get(this.id)?.progressSteps ?? []).map((s) => ({ ...s, status: 'done' })),
+            });
             // ONE short headline note (the full summary lives in lastResult and
             // is rendered as the agent's recap) — no duplicated walls of text.
             const headline = summary.split('\n').find((l) => l.trim())?.trim() ?? 'Task complete.';
@@ -509,6 +591,8 @@ export class Agent {
     switch (name) {
       case 'read_file':
         return `📖 read ${args.path}`;
+      case 'read_many':
+        return `📚 read ${Array.isArray(args.paths) ? args.paths.slice(0, 3).join(', ') : 'files'}`;
       case 'write_file':
         return `✏ write ${args.path}`;
       case 'edit_file':
@@ -517,12 +601,16 @@ export class Agent {
         return `📁 ls ${args.path ?? '.'}`;
       case 'search':
         return `🔍 search /${args.pattern}/`;
+      case 'inspect_project':
+        return `🔎 inspect project`;
       case 'run_command':
         return `$ ${args.command}`;
       case 'post_note':
         return `✉ note → ${args.to}`;
       case 'update_status':
         return `📢 ${args.status}`;
+      case 'update_steps':
+        return `☑ update steps`;
       case 'ask_user':
         return `❓ ${String(args.question ?? '').slice(0, 60)}`;
       case 'load_skill':

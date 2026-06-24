@@ -64,6 +64,13 @@ function useScrollWindow<T>(items: T[], visible: number, anchor: 'top' | 'bottom
 const Above = ({ n }: { n: number }) => (n > 0 ? <Text color="gray">▲ {n} · PgUp</Text> : null);
 const Below = ({ n }: { n: number }) => (n > 0 ? <Text color="gray">▼ {n} · PgDn</Text> : null);
 
+function shortTime(ts: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (seconds < 60) return t('board.secondsAgo', { n: seconds });
+  const minutes = Math.round(seconds / 60);
+  return t('board.minutesAgo', { n: minutes });
+}
+
 /** Usable rows for a view's list, from the REAL terminal height. */
 function useVisibleRows(overhead: number, min = 6): number {
   const { stdout } = useStdout();
@@ -73,17 +80,41 @@ function useVisibleRows(overhead: number, min = 6): number {
 export function BoardView({ board, bodyHeight }: { board: Blackboard; bodyHeight?: number }) {
   const agents = [...board.agents.values()];
   const fallbackVisible = useVisibleRows(12);
-  const visibleAgents = bodyHeight ? Math.max(1, Math.floor((bodyHeight - 7) / 3)) : fallbackVisible;
+  const visibleAgents = bodyHeight ? Math.max(1, Math.floor((bodyHeight - 10) / 3)) : fallbackVisible;
   const { slice: agentSlice, above, below } = useScrollWindow(agents, visibleAgents, 'top');
-  const sideRows = bodyHeight ? Math.max(1, Math.floor((bodyHeight - visibleAgents - 5) / 2)) : 8;
+  const sideRows = bodyHeight ? Math.max(1, Math.floor((bodyHeight - visibleAgents - 8) / 2)) : 8;
   const activities = [...board.fileActivity.values()].sort((a, b) => b.ts - a.ts).slice(0, sideRows);
   const notes = board.notes.slice(-sideRows);
   const warnings = board.workMapWarnings.slice(-Math.max(2, Math.min(4, sideRows)));
   return (
-    <Box borderStyle="round" borderColor="yellow" flexDirection="column" paddingX={1}>
-      <Text bold color="yellow">
+    <Box borderStyle="round" borderColor={BRAND.muted} flexDirection="column" paddingX={1}>
+      <Text bold color={BRAND.primary}>
         {t('board.title')}
       </Text>
+      <Text bold color={warnings.length > 0 ? COLOR.cream : BRAND.primary}>{t('board.workMap')}</Text>
+      {warnings.length > 0 ? (
+        warnings.map((w) => (
+          <Box key={w.id} flexDirection="column">
+            <Text wrap="truncate-end">
+              {'  '}
+              <Text color={w.level === 'conflict' ? 'redBright' : 'yellow'}>{w.level === 'conflict' ? '!' : '⚠'} </Text>
+              <Text color={BRAND.primary}>{w.title}</Text>
+              <Text color="gray"> — {truncate(w.detail, 100)}</Text>
+            </Text>
+            <Text color="gray" wrap="truncate-end">
+              {'    '}
+              {t('board.warningMeta', {
+                agents: w.agentNames.join(', ') || 'agents',
+                paths: w.paths.join(', ') || 'paths',
+                time: shortTime(w.ts),
+              })}
+            </Text>
+          </Box>
+        ))
+      ) : (
+        <Text color="gray"> {t('board.workMapOk')}</Text>
+      )}
+      {warnings.length > 0 ? <Text color={COLOR.creamMuted}>  {t('board.warningSuggestion')}</Text> : null}
       <Text bold>{t('board.agents')}</Text>
       {agents.length === 0 ? (
         <Text color="gray"> {t('board.none')}</Text>
@@ -101,26 +132,13 @@ export function BoardView({ board, bodyHeight }: { board: Blackboard; bodyHeight
               {STATE_LABEL[a.state].icon} {stateLabel(a.state)}
             </Text>
             <Text color="gray"> {truncate(a.currentAction || a.task, 80)}</Text>
-            {a.claims && a.claims.length > 0 ? <Text color="yellow"> · {truncate(a.claims.join(', '), 45)}</Text> : null}
+            {a.claims && a.claims.length > 0 ? <Text color={COLOR.cream}> · ⚑ {truncate(a.claims.join(', '), 45)}</Text> : null}
           </Text>
         ))}
         <Below n={below} />
         </>
       )}
       <Text bold>{t('board.activity')}</Text>
-      {warnings.length > 0 ? (
-        <>
-          <Text bold color="yellowBright">{t('board.workMap')}</Text>
-          {warnings.map((w) => (
-            <Text key={w.id} wrap="truncate-end">
-              {'  '}
-              <Text color={w.level === 'conflict' ? 'redBright' : 'yellow'}>{w.level === 'conflict' ? '!' : '⚠'} </Text>
-              <Text color="yellow">{w.title}</Text>
-              <Text color="gray"> — {truncate(w.detail, 120)}</Text>
-            </Text>
-          ))}
-        </>
-      ) : null}
       {activities.length === 0 ? (
         <Text color="gray"> {t('board.noActivity')}</Text>
       ) : (
@@ -182,11 +200,17 @@ export function DiffView({ board, bodyHeight }: { board: Blackboard; bodyHeight?
   const rows = bodyHeight ? Math.max(8, bodyHeight - 4) : fallbackRows;
   const perChange = Math.max(1, Math.floor(rows / 34));
   const { slice: changes, above, below } = useScrollWindow(board.changes, perChange, 'bottom');
+  const warnings = board.workMapWarnings.filter((w) => w.level !== 'info').slice(-2);
   return (
     <Box borderStyle="round" borderColor="green" flexDirection="column" paddingX={1}>
       <Text bold color="green">
         {t('diff.title', { total: board.changes.length })}
       </Text>
+      {warnings.map((w) => (
+        <Text key={w.id} color={w.level === 'conflict' ? 'redBright' : 'yellow'} wrap="truncate-end">
+          ⚠ {w.title}: {truncate(w.paths.join(', ') || w.detail, 110)}
+        </Text>
+      ))}
       {board.changes.length === 0 ? (
         <Text color="gray">{t('diff.empty')}</Text>
       ) : (
@@ -399,7 +423,7 @@ export function HelpView({ bodyHeight, onSelect }: { bodyHeight?: number; onSele
   const above = start;
   const below = Math.max(0, commands.length - start - slice.length);
   const highlights: Array<[string, string[]]> = [
-    ['Agent modes', ['/ask', '/task', '/plan']],
+    ['Agent modes', ['/ask', '/task', '/plan', '/review']],
     ['Shell approvals', ['/approvals ask', '/approvals auto', '/approvals yolo']],
     ['Navigation', ['/focus', '/attach', '/raw', '/send']],
   ];

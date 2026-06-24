@@ -20,6 +20,7 @@ function itemColor(item: TimelineItem): string {
   if (item.kind === 'command') return UI.accent;
   if (item.kind === 'files') return item.category === 'change' ? UI.warn : UI.muted;
   if (item.category === 'coordinate') return UI.note;
+  if (item.label === 'next') return UI.accent;
   if (item.kind === 'thought') return UI.muted;
   if (item.kind === 'narration') return UI.text;
   return UI.text;
@@ -69,6 +70,16 @@ function TimelineRow({ item, cols }: { item: TimelineItem; cols: number }) {
           <Text color={UI.accent}>{truncate(item.command ?? '', max)}</Text>
         </Text>
         <OutputLines item={item} cols={cols} />
+      </Box>
+    );
+  }
+  if (item.label === 'next') {
+    return (
+      <Box marginTop={1}>
+        <Text color={UI.accent} wrap="wrap">
+          <Text color={UI.muted}>→ </Text>
+          {truncate(item.detail ?? '', max)}
+        </Text>
       </Box>
     );
   }

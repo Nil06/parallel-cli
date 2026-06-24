@@ -1,14 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import net from 'node:net';
-import { Box, Static, Text, useApp } from 'ink';
+import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
 import type { AgentInfo, AgentMode, AgentQuestion, ApprovalRequest, LogEntry } from '../types.js';
 import { ApprovalPrompt } from './ApprovalPrompt.js';
 import { CommandInput } from './CommandInput.js';
-import { formatAgentTelemetry, KIND_COLOR, KIND_DIM } from './AgentPanel.js';
+import { formatAgentTelemetry, KIND_COLOR, KIND_DIM, modeBadge, ProgressSteps } from './AgentPanel.js';
 import { Md } from './Md.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
-import { Spinner } from './Spinner.js';
 import { Timeline } from './Timeline.js';
+import { toUIEvents } from './events.js';
 import { stateLabel, elapsed, truncate } from './theme.js';
 import { fmtCost } from '../pricing.js';
 import { t } from '../i18n.js';
@@ -30,6 +30,17 @@ import { COLOR, STATE_META, UI, middleTruncate } from './tokens.js';
 interface StaticLine {
   key: number;
   log: LogEntry;
+}
+
+interface LaunchCard {
+  key: number;
+  info: AgentInfo;
+}
+
+interface ResultCard {
+  key: number;
+  info: AgentInfo;
+  result: string;
 }
 
 interface OtherAgent {
@@ -55,6 +66,7 @@ interface WireQuestion {
 }
 
 const noop = (): void => {};
+const TERMINAL_STATES = new Set<AgentInfo['state']>(['done', 'error', 'stopped']);
 
 export type AttachCommand =
   | { type: 'detach' }
@@ -72,6 +84,14 @@ export function parseAttachCommand(text: string): AttachCommand | null {
   if (at) return { type: 'send', target: at[1], text: at[2].trim() };
   const send = v.match(/^\/send\s+(\S+)\s+(.+)$/s);
   if (send) return { type: 'send', target: send[1], text: send[2].trim() };
+  const review = v.match(/^\/review\s+(.+)$/s);
+  if (review) {
+    return {
+      type: 'spawn',
+      text: `Review current shared-tree work: ${review[1].trim()}. Return Verdict: APPROVE | REVISE | BLOCK, Risks, Tests to run, Files to inspect, and Notes.`,
+      mode: 'ask',
+    };
+  }
   const m = v.match(/^\/(ask|a|task|t|plan|p)\s+(.+)$/s);
   if (m) {
     const mode: AgentMode = m[1] === 'ask' || m[1] === 'a' ? 'ask' : m[1] === 'plan' || m[1] === 'p' ? 'plan' : 'task';
@@ -85,11 +105,82 @@ export function formatAttachFooter(info: AgentInfo | null): string {
   return `${middleTruncate(info.model, 28)} · ${formatAgentTelemetry(info)} · plain text steers · /task new · /quit`;
 }
 
+function AttachStaticLine({ item, raw }: { item: StaticLine; raw: boolean }) {
+  if (raw) {
+    return (
+      <Text
+        color={KIND_COLOR[item.log.kind] ?? 'white'}
+        italic={KIND_DIM[item.log.kind] ?? false}
+        wrap="wrap"
+      >
+        {item.log.text}
+      </Text>
+    );
+  }
+  const event = toUIEvents([item.log])[0];
+  if (!event || event.kind === 'thought') return <Text color={UI.muted}> </Text>;
+  const color = event.kind === 'error' ? UI.danger : event.kind === 'note' ? UI.note : event.kind === 'command' ? UI.accent : UI.muted;
+  const detail = event.detail.replace(/\r/g, '').split('\n').filter(Boolean).slice(0, 3).join(' ↳ ');
+  return (
+    <Text color={color} wrap="truncate-end">
+      <Text color={UI.muted}>• </Text>
+      <Text bold>{event.label}</Text>
+      {detail ? <Text color={event.kind === 'command_output' ? UI.muted : color}> {truncate(detail, process.stdout.columns ? process.stdout.columns - 8 : 120)}</Text> : null}
+    </Text>
+  );
+}
+
+export function isLaunchSystemLog(log: LogEntry): boolean {
+  return log.kind === 'system' && /\bAgent\s+.+\slaunched\b|Terminal dédié ouvert|Dedicated terminal/i.test(log.text);
+}
+
+function AttachLaunchHeader({ item }: { item: LaunchCard }) {
+  const { info } = item;
+  const mode = modeBadge(info.mode);
+  return (
+    <Box flexDirection="column" borderStyle="single" borderColor={info.color} paddingX={1} marginBottom={1}>
+      <Text color={UI.brand} bold>
+        Parallel agent terminal
+      </Text>
+      <Text wrap="truncate-end">
+        <Text color={info.color} bold>{info.name}</Text>
+        {info.alias && info.alias !== info.name ? <Text color={UI.muted}> @{info.alias}</Text> : null}
+        <Text color={mode.color}> [{mode.label}]</Text>
+        <Text color={UI.muted}> · </Text>
+        <Text color={UI.text}>{middleTruncate(info.model, 36)}</Text>
+      </Text>
+      <Text color={UI.muted} wrap="wrap">
+        Task  <Text color={UI.text}>{info.task}</Text>
+      </Text>
+      <Text color={COLOR.creamMuted}>Dedicated terminal is ready.</Text>
+      <Text> </Text>
+      <Text> </Text>
+    </Box>
+  );
+}
+
+function AttachResultCard({ item }: { item: ResultCard }) {
+  const st = STATE_META[item.info.state];
+  return (
+    <Box borderStyle="single" borderColor={st.color} flexDirection="column" paddingX={1} marginTop={1}>
+      <Text color={COLOR.cream} bold>
+        Result · {item.info.name} [{st.label}]
+      </Text>
+      <Md text={item.result} />
+    </Box>
+  );
+}
+
 export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
   const [info, setInfo] = useState<AgentInfo | null>(null);
   const [others, setOthers] = useState<OtherAgent[]>([]);
+  const [launchCards, setLaunchCards] = useState<LaunchCard[]>([]);
+  const [resultCards, setResultCards] = useState<ResultCard[]>([]);
   const [lines, setLines] = useState<StaticLine[]>([]);
+  const [timelineScroll, setTimelineScroll] = useState(0);
+  const [timelineFollowTail, setTimelineFollowTail] = useState(true);
   const [approval, setApproval] = useState<WireApproval | null>(null);
   const [question, setQuestion] = useState<WireQuestion | null>(null);
   const [gone, setGone] = useState(false);
@@ -97,6 +188,8 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
   const socketRef = useRef<net.Socket | null>(null);
   const keySeq = useRef(0);
   const lastBellId = useRef('');
+  const launchRendered = useRef(false);
+  const renderedResultKey = useRef('');
 
   useEffect(() => {
     const socket = net.connect(sock);
@@ -140,6 +233,20 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
     };
   }, [agentRef, sock]);
 
+  useEffect(() => {
+    if (!info || launchRendered.current) return;
+    launchRendered.current = true;
+    setLaunchCards([{ key: ++keySeq.current, info }]);
+  }, [info?.id]);
+
+  useEffect(() => {
+    if (!info || !TERMINAL_STATES.has(info.state) || !info.lastResult) return;
+    const key = `${info.id}:${info.state}:${info.lastResult.length}:${info.lastResult.slice(0, 24)}`;
+    if (renderedResultKey.current === key) return;
+    renderedResultKey.current = key;
+    setResultCards((prev) => [...prev, { key: ++keySeq.current, info: { ...info }, result: info.lastResult ?? '' }]);
+  }, [info?.id, info?.state, info?.lastResult]);
+
   // Audible alert in THIS terminal when a new interaction arrives — the hub
   // also rings, but the user may well be looking at the agent's terminal.
   useEffect(() => {
@@ -167,7 +274,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
       setRaw((r) => !r);
       return;
     }
-    // /task|/ask|/plan <text> — launch agent N+1 from this terminal.
+    // /task|/ask|/plan|/review <text> — launch agent N+1 from this terminal.
     if (cmd.type === 'spawn') {
       wire({ type: 'spawn', text: cmd.text, mode: cmd.mode });
       return;
@@ -181,7 +288,43 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
 
   const st = info ? STATE_META[info.state] : null;
   const busy = info ? ['thinking', 'working', 'listening'].includes(info.state) : false;
+  const terminal = info ? TERMINAL_STATES.has(info.state) : false;
   const interacting = Boolean(approval || question);
+  const logs = lines.map((l) => l.log);
+  const staticLines = raw ? lines : lines.filter((l) => l.log.kind !== 'llm' && !isLaunchSystemLog(l.log));
+  const timelineVisibleLogs = Math.max(8, (stdout?.rows ?? 30) - 14);
+  const maxTimelineScroll = Math.max(0, logs.length - timelineVisibleLogs);
+  const clampedTimelineScroll = Math.min(timelineScroll, maxTimelineScroll);
+  const timelineWindow = logs.slice(
+    Math.max(0, logs.length - timelineVisibleLogs - clampedTimelineScroll),
+    logs.length - clampedTimelineScroll,
+  );
+
+  useEffect(() => {
+    if (timelineFollowTail) setTimelineScroll(0);
+  }, [logs.length, timelineFollowTail]);
+
+  const scrollTimeline = (direction: 'up' | 'down') => {
+    if (direction === 'up') {
+      setTimelineFollowTail(false);
+      setTimelineScroll((s) => Math.min(Math.min(s, maxTimelineScroll) + Math.max(1, Math.floor(timelineVisibleLogs / 2)), maxTimelineScroll));
+      return;
+    }
+    setTimelineScroll((s) => {
+      const next = Math.max(0, Math.min(s, maxTimelineScroll) - Math.max(1, Math.floor(timelineVisibleLogs / 2)));
+      if (next === 0) setTimelineFollowTail(true);
+      return next;
+    });
+  };
+
+  useInput(
+    (_input, key) => {
+      if (!busy || interacting || raw) return;
+      if (key.pageUp) scrollTimeline('up');
+      if (key.pageDown) scrollTimeline('down');
+    },
+    { isActive: Boolean(busy && !interacting && !raw) },
+  );
 
   const banner = (
     <Text wrap="truncate-end">
@@ -200,30 +343,34 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
 
   return (
     <Box flexDirection="column">
-      {raw ? (
-        <Static items={lines}>
-          {(item) => (
-            <Text
-              key={item.key}
-              color={KIND_COLOR[item.log.kind] ?? 'white'}
-              italic={KIND_DIM[item.log.kind] ?? false}
-              wrap="wrap"
-            >
-              {item.log.text}
-            </Text>
-          )}
+      {!raw ? (
+        <Static items={launchCards}>
+          {(item) => <AttachLaunchHeader key={item.key} item={item} />}
         </Static>
       ) : null}
 
-      {busy && info && st && !interacting ? (
-        /* COMPACT region while the agent runs: small + borderless, so Ink's
-         * constant repaints (spinner ticks) never erase tall zones — this is
-         * what used to leave stray blank lines in the native scrollback. */
+      <Static items={staticLines}>
+        {(item) => (
+          <AttachStaticLine key={item.key} item={item} raw={raw} />
+        )}
+      </Static>
+
+      {!raw ? (
+        <Static items={resultCards}>
+          {(item) => <AttachResultCard key={item.key} item={item} />}
+        </Static>
+      ) : null}
+
+      {!raw && staticLines.length > 0 ? <Text color={UI.muted}>{'─'.repeat(Math.min(Math.max(20, (stdout?.columns ?? 100) - 4), 80))}</Text> : null}
+
+      {(busy || terminal) && info && st && !interacting ? (
+        /* While running, keep the native terminal scrollback stable: activity is
+         * appended once above via <Static>, and this live region stays tiny. */
         <Box flexDirection="column" marginTop={1}>
           <Text wrap="truncate-end">
             <Text color={info.color} bold>{info.alias || info.name}</Text>{' '}
-            <Text color={st.color} bold>{st.mark} {st.label}</Text>{' '}
-            <Spinner color={info.color} />
+            <Text color={modeBadge(info.mode).color}>[{modeBadge(info.mode).label}]</Text>{' '}
+            <Text color={st.color} bold>{st.mark} {st.label}</Text>
             <Text color={UI.muted}>
               {' '}· {elapsed(info.startedAt)} · {info.steps} st ·{' '}
               {Math.round((info.tokensIn + info.tokensOut) / 1000)}k ·{' '}
@@ -235,6 +382,10 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
               Current  {truncate(info.currentAction, 120)}
             </Text>
           ) : null}
+          <ProgressSteps agent={info} max={6} cols={process.stdout.columns || 100} />
+          {terminal && info.lastResult ? (
+            <Text color={COLOR.creamMuted}>Result was appended above; native mouse scroll stays available.</Text>
+          ) : null}
           {others.length > 0 ? (
             <Text color={UI.muted} wrap="truncate-end">
               Others  {' '}
@@ -243,23 +394,22 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
                 .join(' · ')}
             </Text>
           ) : null}
-          {!raw ? (
+          {!timelineFollowTail ? (
             <Box flexDirection="column" marginTop={1}>
-              <Text color={UI.muted} bold>
-                {t('timeline.activity')}
-              </Text>
-              <Timeline logs={lines.map((l) => l.log)} cols={process.stdout.columns || 100} />
+              <Text color={UI.warn}>Viewing older activity · ↓/PgDn to latest</Text>
+              <Timeline logs={timelineWindow} cols={process.stdout.columns || 100} />
             </Box>
           ) : null}
         </Box>
       ) : (
-        /* FULL panel when idle / waiting / done — repaints are rare here. */
+        /* FULL panel for idle/waiting/interactions — terminal states stay compact. */
         <Box borderStyle="single" borderColor={info?.color ?? 'gray'} flexDirection="column" paddingX={1} marginTop={1}>
           {info && st ? (
             <>
               <Box justifyContent="space-between">
                 <Box>
                   {banner}
+                  <Text color={modeBadge(info.mode).color}> [{modeBadge(info.mode).label}]</Text>
                   <Text color={st.color} bold>
                     {' '}{st.mark} {st.label}
                   </Text>
@@ -283,6 +433,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
                   Current  {truncate(info.currentAction, 160)}
                 </Text>
               ) : null}
+              <ProgressSteps agent={info} max={6} cols={process.stdout.columns || 100} />
               {others.length > 0 ? (
                 // The session's shared awareness, visible here too: what the
                 // OTHER agents are doing right now (live, same feed the agents get).
@@ -292,14 +443,6 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
                     .map((o) => `${o.name} [${stateLabel(o.state)}] ${truncate(o.currentAction || o.task, 40)}`)
                     .join(' · ')}
                 </Text>
-              ) : null}
-              {!raw ? (
-                <Box flexDirection="column" marginTop={1}>
-                  <Text color={UI.muted} bold>
-                    {t('timeline.activity')}
-                  </Text>
-                  <Timeline logs={lines.map((l) => l.log)} cols={process.stdout.columns || 100} />
-                </Box>
               ) : null}
               {info.lastResult && (info.state === 'done' || info.state === 'error' || info.state === 'stopped') ? (
                 <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1} marginTop={1}>
@@ -339,6 +482,7 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
         />
       ) : null}
 
+      <Text> </Text>
       <CommandInput
         active={!gone && !interacting}
         placeholder={t('attach.placeholder', { agent: info?.name ?? agentRef })}
@@ -350,9 +494,11 @@ export function AttachApp({ agentRef, sock }: { agentRef: string; sock: string }
         )}
         agents={info ? [info] : []}
         width={process.stdout.columns || 100}
+        onIdleNavigation={busy && !raw ? scrollTimeline : undefined}
         onSubmit={send}
         onEscape={() => exit()}
       />
+      <Text> </Text>
       <Box marginBottom={1}>
         <Text color={COLOR.creamMuted} wrap="truncate-end">
           {formatAttachFooter(info)}
