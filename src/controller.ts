@@ -5,11 +5,18 @@ import { exec, execFileSync, spawn } from 'node:child_process';
 import { Blackboard } from './coordination/blackboard.js';
 import { LLMClient } from './llm/client.js';
 import { Agent } from './agents/agent.js';
-import { configFile, saveConfig, getProvider, upsertProvider } from './config.js';
-import { priceFor, fmtCost } from './pricing.js';
+import { configFile, saveConfig, getProvider, providerReady, upsertProvider } from './config.js';
+import { priceFor, fmtCost, costOf } from './pricing.js';
 import { loadSkills, loadSpecialists } from './skills.js';
 import { t } from './i18n.js';
 import { chmodPrivateTree, ensurePrivateDir, sanitizeForPersistence, writeFileAtomicPrivate } from './security.js';
+import {
+  ProjectContextStore,
+  type ProjectContextGenerator,
+  type ProjectContextStatusSnapshot,
+} from './project-context.js';
+import { ProjectIndex, type ProjectIndexStatus } from './project-index.js';
+import { classifyExecutionProfile, EXECUTION_BUDGETS } from './agents/execution-policy.js';
 import type {
   AgentQuestion,
   ApprovalRequest,
@@ -22,6 +29,7 @@ import type {
   SessionData,
   SessionSettings,
   Specialist,
+  ExecutionProfile,
 } from './types.js';
 
 const AGENT_COLORS = ['#f3e7c7', 'magenta', 'yellow', 'green', 'whiteBright', 'redBright', '#c8bfa6', 'magentaBright'];
@@ -77,6 +85,8 @@ function commandApprovalKey(command: string): string {
  */
 export class Controller extends EventEmitter {
   board: Blackboard;
+  projectContext: ProjectContextStore;
+  projectIndex: ProjectIndex;
   agents = new Map<string, Agent>();
   approvals: ApprovalRequest[] = [];
   questions: AgentQuestion[] = [];
@@ -99,6 +109,7 @@ export class Controller extends EventEmitter {
   private sessionOnlyProvider: ProviderConfig | null = null;
   private readonly sessionRetentionDays = 30;
   private readonly sessionRetentionMax = 30;
+  private restoredSessionContext = '';
 
   constructor(
     public config: ParallelConfig,
@@ -106,6 +117,19 @@ export class Controller extends EventEmitter {
   ) {
     super();
     this.board = new Blackboard(projectRoot);
+    this.projectContext = new ProjectContextStore(projectRoot, (status, detail) => {
+      const text =
+        status === 'indexing'
+          ? t('memory.indexing')
+          : status === 'ready'
+            ? t('memory.ready')
+            : status === 'fallback'
+              ? t('memory.fallback', { detail: detail ?? '' })
+              : '';
+      if (text) this.board.log('', 'memory', text);
+      this.emit('update');
+    });
+    this.projectIndex = new ProjectIndex(projectRoot);
     const p = getProvider(config);
     this.session = {
       providerName: p?.name ?? '',
@@ -117,6 +141,10 @@ export class Controller extends EventEmitter {
     this.board.on('agent-event', (ev: any) => this.onAgentEvent(ev));
     this.board.on('note', (note: Note) => this.nudgeFromNote(note));
     this.hardenPrivateState();
+    queueMicrotask(() => {
+      this.projectIndex.refresh();
+      void this.prewarmProjectContext();
+    });
     // Autosave: the session (+ conversations, written live by agents) survives a crash.
     const autosave = setInterval(() => this.saveSession(), 30_000);
     autosave.unref();
@@ -166,6 +194,77 @@ export class Controller extends EventEmitter {
     return c;
   }
 
+  private projectContextGenerator(): ProjectContextGenerator | undefined {
+    const provider = this.sessionProvider();
+    const model = this.session.model || provider?.defaultModel || provider?.models[0] || '';
+    if (!provider || !model || !providerReady(provider)) return undefined;
+    const llm = this.llmFor(provider, model);
+    const price = priceFor(provider, model);
+    return async (messages) => {
+      const result = await llm.chat(messages);
+      return {
+        content: result.message.content ?? '',
+        tokensIn: result.tokensIn,
+        tokensOut: result.tokensOut,
+        model,
+        cost: price ? costOf(price, result.tokensIn, result.tokensOut) : null,
+      };
+    };
+  }
+
+  prewarmProjectContext(force = false): Promise<unknown> {
+    return this.projectContext.refresh(this.projectContextGenerator(), force);
+  }
+
+  refreshProjectContext(): Promise<unknown> {
+    this.projectIndex.refresh();
+    return this.prewarmProjectContext(true);
+  }
+
+  projectContextStatus(): ProjectContextStatusSnapshot {
+    return this.projectContext.statusSnapshot();
+  }
+
+  projectIndexStatus(): ProjectIndexStatus {
+    return this.projectIndex.status();
+  }
+
+  private async projectContextBootstrap(task = ''): Promise<string> {
+    const agents = [...this.board.agents.values()]
+      .map(
+        (agent) =>
+          `- ${agent.name} [${agent.state}] ${agent.task}` +
+          (agent.currentAction ? ` | current: ${agent.currentAction}` : '') +
+          (agent.lastResult ? ` | result: ${agent.lastResult.slice(0, 600)}` : ''),
+      )
+      .join('\n');
+    const notes = this.board.notes
+      .slice(-20)
+      .map((note) => `- ${note.from} → ${note.to}: ${note.content.slice(0, 500)}`)
+      .join('\n');
+    const changes = this.board.changes
+      .slice(-20)
+      .map((change) => `- ${change.agentName}: ${change.path}`)
+      .join('\n');
+    const preSpawnContext = `PRE-SPAWN SESSION CONTEXT
+Agents:
+${agents || '- none'}
+Recent notes:
+${notes || '- none'}
+Changes made before this agent started:
+${changes || '- none'}`;
+    const shared = this.projectContext.snapshot();
+    const targeted = this.projectIndex.retrieve(task);
+    return [
+      shared,
+      targeted,
+      preSpawnContext,
+      this.restoredSessionContext ? `RESTORED SESSION CONTEXT\n${this.restoredSessionContext}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
+
   // ---------- sound cues (terminal bell) ----------
 
   private onAgentEvent(ev: { type: string; id?: string; state?: string; prev?: string; path?: string }): void {
@@ -208,6 +307,9 @@ export class Controller extends EventEmitter {
 
   private nudgeFromNote(note: Note): void {
     if (note.to === 'user' || note.from === 'system') return;
+    // User steering is urgent. Ordinary team notes are consumed as a batch on
+    // the next natural turn so they do not discard an in-flight model call.
+    if (note.from !== 'user' && !/\b(urgent|blocker|blocked|conflict|collision)\b/i.test(note.content)) return;
     const recipients =
       note.to === 'all'
         ? [...this.board.agents.values()].filter((a) => a.name.toLowerCase() !== note.from.toLowerCase())
@@ -354,6 +456,7 @@ export class Controller extends EventEmitter {
     specialistName?: string,
     initialHistory?: any[],
     mode: AgentMode = 'task',
+    forcedProfile?: ExecutionProfile,
   ): Agent | null {
     // Specialist persona: role appended to the system prompt, may pin a model.
     let specialist: Specialist | undefined;
@@ -375,6 +478,8 @@ export class Controller extends EventEmitter {
     // A custom name keeps its alias, so the agent stays addressable both ways.
     const alias = `a${this.agentSeq}`;
     const agentName = name?.trim() || alias;
+    const profile = classifyExecutionProfile(task, mode, forcedProfile);
+    const budget = EXECUTION_BUDGETS[profile];
     const color = AGENT_COLORS[(this.agentSeq - 1) % AGENT_COLORS.length];
     // Conversation file (JSONL, appended live) — enables /restore after a save.
     let historyFile: string | undefined;
@@ -395,11 +500,13 @@ export class Controller extends EventEmitter {
       color,
       task,
       mode,
+      profile,
       model: resolved.model,
       llm: this.llmFor(resolved.provider, resolved.model),
       board: this.board,
       projectRoot: this.projectRoot,
       maxSteps: this.config.maxStepsPerAgent,
+      budget,
       requestApproval: this.requestApproval,
       requestQuestion: this.requestQuestion,
       images,
@@ -409,6 +516,26 @@ export class Controller extends EventEmitter {
       projectMemory: this.projectMemory(),
       historyFile,
       initialHistory,
+      projectContext: this.projectContextBootstrap(task),
+      onInspect: (agentId, relPath, content) => {
+        this.projectContext.recordInspection(agentId, relPath, content);
+        const current = this.board.agents.get(agentId);
+        if (current) {
+          current.inspectedFiles = this.projectContext.inspectedFiles(agentId);
+        }
+      },
+      onComplete: (agentId, summary) => {
+        const info = this.board.agents.get(agentId);
+        if (!info) return;
+        const changedFiles = [...new Set(this.board.changes.filter((change) => change.agentId === agentId).map((change) => change.path))];
+        this.projectContext.recordOutcome(agentId, {
+          agentName: info.name,
+          task: info.task,
+          result: summary,
+          changedFiles,
+        });
+        this.projectIndex.refresh();
+      },
     });
     if (historyFile) this.conversationFiles.set(id, historyFile);
     this.agents.set(id, agent);
@@ -495,7 +622,7 @@ export class Controller extends EventEmitter {
     }
     if (history.length === 0) return 'no-conversation';
     const modelSpec = sa.model ? (sa.providerName ? `${sa.providerName}:${sa.model}` : sa.model) : undefined;
-    return this.spawnAgent(sa.task, sa.name, modelSpec, undefined, sa.specialist, history, sa.mode ?? 'task');
+    return this.spawnAgent(sa.task, sa.name, modelSpec, undefined, sa.specialist, history, sa.mode ?? 'task', sa.profile);
   }
 
   pauseAgent(name: string): boolean {
@@ -747,8 +874,10 @@ export class Controller extends EventEmitter {
           alias: a.alias,
           task: a.task,
           mode: a.mode,
+          profile: a.profile,
           state: a.state,
           lastResult: a.lastResult,
+          startedAt: a.startedAt,
           steps: a.steps,
           tokensIn: a.tokensIn,
           tokensOut: a.tokensOut,
@@ -761,6 +890,7 @@ export class Controller extends EventEmitter {
           ctxPct: a.ctxPct,
           progressSteps: a.progressSteps,
           perf: a.perf,
+          inspectedFiles: a.inspectedFiles,
           conversation: this.conversationFiles.get(a.id),
         })),
         notes: this.board.notes.slice(-200),
@@ -768,6 +898,12 @@ export class Controller extends EventEmitter {
         fileActivity: [...this.board.fileActivity.values()].slice(-100),
         workMapWarnings: this.board.workMapWarnings.slice(-80),
         changedFiles: [...new Set(this.board.changes.map((c) => c.path))],
+        projectContext: {
+          schemaVersion: 1,
+          generatedAt: this.projectContextStatus().generatedAt,
+          fingerprint: this.projectContextStatus().fingerprint,
+          status: this.projectContextStatus().status,
+        },
       };
       const file = path.join(dir, `session-${this.sessionStamp}.json`);
       writeFileAtomicPrivate(file, sanitizeForPersistence(JSON.stringify(data, null, 2)));
@@ -800,6 +936,10 @@ export class Controller extends EventEmitter {
     this.loadedSession = data;
     if (data.name) this.sessionName = data.name;
     const tasks = data.agents.map((a) => `${a.name} [${a.state}] : ${a.task}${a.lastResult ? ` → ${a.lastResult}` : ''}`);
+    this.restoredSessionContext = `Previous session saved at ${data.savedAt}.
+Past agents:
+${tasks.join('\n')}
+Files changed then: ${(data.changedFiles ?? []).join(', ') || '(none)'}`;
     this.board.hydrate({
       notes: data.notes ?? [],
       changes: data.changes ?? [],
@@ -809,7 +949,7 @@ export class Controller extends EventEmitter {
     this.board.addNote(
       'system',
       'all',
-      `Previous session restored (${data.savedAt}). Past work:\n${tasks.join('\n')}\nFiles changed then: ${(data.changedFiles ?? []).join(', ') || '(none)'}`,
+      this.restoredSessionContext,
     );
     this.board.log('', 'system', t('m.sessionRestored', { date: new Date(data.savedAt).toLocaleString() }));
     // Financial history: per-agent cost/steps/tokens of the restored session.
@@ -834,6 +974,7 @@ export class Controller extends EventEmitter {
     this.session.providerName = r.provider.name;
     this.session.model = r.model;
     this.emit('update');
+    void this.prewarmProjectContext();
     return { provider: r.provider.name, model: r.model };
   }
 
@@ -844,6 +985,7 @@ export class Controller extends EventEmitter {
     this.session.providerName = p.name;
     this.session.model = p.defaultModel || p.models[0] || '';
     this.emit('update');
+    void this.prewarmProjectContext();
     return true;
   }
 
@@ -853,6 +995,7 @@ export class Controller extends EventEmitter {
     this.session.model = p.defaultModel || p.models[0] || '';
     this.llmCache.clear();
     this.emit('update');
+    void this.prewarmProjectContext();
   }
 
   setSessionApprovalMode(mode: ShellApprovalMode): void {

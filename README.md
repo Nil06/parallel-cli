@@ -32,6 +32,7 @@ Parallel lets several AI coding agents co-edit the same repository at the same t
 - Keep shell execution controlled with `ask`, `auto-safe`, or `yolo` approvals.
 - Get prompted for npm updates at startup, with an explicit skip path.
 - Save and restore project sessions.
+- Reuse a persistent, automatically synthesized project map across new agents in the same folder.
 - Run headless multi-agent jobs for CI or scripts.
 
 ## Install
@@ -137,6 +138,14 @@ The reviewer is ask-only: it does not edit, does not gate the session globally, 
 - `/review`: lightweight reviewer around `/ask`. It inspects the current shared-tree work and returns `APPROVE`, `REVISE`, or `BLOCK` with risks, tests to run, and files to inspect.
 
 Task and plan agents maintain a small Cursor-style checklist with one active step at a time. The runtime also encourages batched inspection through `read_many` and `inspect_project` so agents avoid slow chains of tiny read-only shell commands.
+
+Every agent also receives an execution profile:
+
+- `quick`: targeted questions, diagnostics, and small changes; six model turns by default.
+- `standard`: bounded multi-file work; sixteen model turns by default.
+- `deep`: plans, migrations, and long-running refactors; up to the configured global limit.
+
+Parallel selects the profile locally without spending a model call. Override it when needed with `--quick`, `--standard`, or `--deep`, for example `/task --quick fix the sound toggle`. A profile only escalates automatically when the agent discovers concrete cross-file complexity; repeated exploration does not earn more budget.
 
 Aliases:
 
@@ -340,6 +349,8 @@ If the update succeeds, restart Parallel to run the new version. Use `parallel -
 - `/diff`: live diff history.
 - `/cost`: token and cost breakdown.
 - `/status`: session model, approval mode, agents, and cost snapshot.
+- `/memory`: show shared project-memory freshness, model, tokens, and cost.
+- `/memory refresh`: force a visible regeneration of the shared project map.
 - `/skills`: available skills.
 - `/specialists`: available specialists.
 - `/save [name]`: save the current session.
@@ -347,12 +358,16 @@ If the update succeeds, restart Parallel to run the new version. Use `parallel -
 - `/session <n|latest>`: load a saved session snapshot. If active agents are running, use `/session <n|latest> --force` after saving/stopping what you need.
 - `/restore <agent>`: relaunch a restored agent by name, alias, or saved id when its conversation history is still available.
 
-Session memory has two layers:
+Project and session memory have three distinct layers:
 
 - Live memory: active agents see statuses, notes, claims, work-map warnings, file activity, and recent diffs before every model action.
-- Durable memory: `/save` and autosave persist notes, claims, recent diff excerpts, file activity, work-map warnings, agent aliases, model/provider metadata, context usage, and conversation paths for restore.
+- Project memory: `.parallel/project-context.json` stores a model-generated architecture map, entry points, conventions, pitfalls, file hashes, and recent completed work. It loads automatically for every new agent in the same folder.
+- Local index: `.parallel/index/manifest.json` incrementally records text files, symbols, imports, hashes, and searchable terms. Before the first model call, Parallel uses it to rank the files relevant to the current task.
+- Session/conversation memory: `/save` and autosave persist coordination state and per-agent conversation paths for explicit `/restore`.
 
-Restore is best effort and explicit. `/session` reloads coordination memory into the blackboard; `/restore <agent>` relaunches an agent only when the saved conversation file still exists. Restored agents keep their prior task, mode, model, specialist, and conversation when available.
+Parallel prewarms project memory when a project opens, but the first agent never waits for an LLM-generated synthesis. It immediately uses the persisted map, deterministic fallback, and local task-oriented index while enrichment continues in the background. `/memory` reports both map and index freshness.
+
+Agents trust the project map for orientation, but re-read files that are relevant, unknown, stale, or about to be modified. Full conversations are never copied into unrelated new agents. Restore remains best effort and explicit: `/session` reloads coordination memory, while `/restore <agent>` relaunches the selected agent with its prior conversation when available.
 
 ### Settings And Exit
 
@@ -365,7 +380,7 @@ Restore is best effort and explicit. `/session` reloads coordination memory into
 - `/folder [folder]`: alias for `/project`.
 - `/wizard`: relaunch the setup wizard. If agents are active, use `/wizard --force` after saving/stopping what you need.
 - `/setup`: alias for `/wizard`.
-- `/doctor`: run local readiness diagnostics for provider, key, model, endpoint, attach socket, and Git tooling.
+- `/doctor`: run local readiness diagnostics for provider, key, model, endpoint, project memory, attach socket, and Git tooling.
 - `/help`: full command reference.
 - `/quit`: save the session and exit.
 
@@ -392,7 +407,7 @@ Parallel separates agent modes from shell approval behavior.
 Parallel stores credentials and session state with owner-only permissions where supported:
 
 - `~/.parallel/config.json` and `~/.parallel/update.json` are written privately and atomically.
-- Project runtime files under `.parallel/` use private directories for sessions, conversations, memory, socket state, and attach tokens.
+- Project runtime files under `.parallel/` use private directories for sessions, conversations, project context, memory, socket state, and attach tokens.
 - Attached terminals authenticate to the running session with a per-session token; local clients without the token cannot steer agents or answer approvals.
 - `/doctor` reports local permission warnings alongside provider, model, endpoint, attach socket, `git`, and `gh` checks.
 - Command output shown in logs is sanitized to strip terminal escape/control sequences.
@@ -402,7 +417,9 @@ Shell safety is still a shared responsibility. `auto-safe` uses conservative heu
 
 ## Sessions, Skills, And Specialists
 
-Parallel stores project state under `.parallel/` in the selected project directory. That includes saved sessions, memory, skills, specialists, and session socket state.
+Parallel stores project state under `.parallel/` in the selected project directory. That includes saved sessions, the generated project context, durable facts, skills, specialists, and session socket state.
+
+`.parallel/state.json` remains a best-effort diagnostic snapshot. It is not loaded as conversation history; use project memory for shared understanding and `/restore` for exact agent continuity.
 
 Skills are markdown instruction files agents can load with the `load_skill` tool or that you can force-load with `#skill-name` in a task:
 

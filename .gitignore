@@ -23,6 +23,7 @@ test/
 Thumbs.db
 
 # IDE
+.cursor/
 .idea/
 *.swp
 *.swo

@@ -17,6 +17,8 @@ export interface AgentInfo {
   color: string;
   task: string;
   mode: AgentMode;
+  /** Runtime budget selected automatically or forced by the user. */
+  profile: ExecutionProfile;
   model: string;
   state: AgentState;
   currentAction: string;
@@ -39,6 +41,8 @@ export interface AgentInfo {
   progressSteps?: AgentProgressStep[];
   /** Lightweight performance counters for this agent run. */
   perf?: AgentPerf;
+  /** Files whose content this agent inspected during this run. */
+  inspectedFiles?: string[];
 }
 
 export interface AgentProgressStep {
@@ -52,6 +56,17 @@ export interface AgentPerf {
   shellCommands: number;
   shellMs: number;
   readOnlyShellCommands: number;
+  /** Wall-clock time spent waiting for normal model turns. */
+  llmMs: number;
+  /** Extra model calls used to compact long history; not part of agent steps. */
+  compactionTurns: number;
+  compactionMs: number;
+  /** Largest single prompt reported by the provider. */
+  maxPromptTokens: number;
+  /** Provider retries performed outside visible agent turns. */
+  retries: number;
+  /** Prompt tokens served from a provider cache when reported. */
+  cachedTokens: number;
 }
 
 export interface Note {
@@ -134,6 +149,7 @@ export interface AgentQuestion {
 export type ShellApprovalMode = 'ask' | 'auto-safe' | 'yolo';
 export type ApprovalMode = ShellApprovalMode;
 export type AgentMode = 'ask' | 'task' | 'plan';
+export type ExecutionProfile = 'quick' | 'standard' | 'deep';
 
 export type Lang = 'en' | 'zh' | 'es' | 'fr';
 
@@ -195,8 +211,10 @@ export interface SessionData {
     alias?: string;
     task: string;
     mode?: AgentMode;
+    profile?: ExecutionProfile;
     state: string;
     lastResult?: string;
+    startedAt?: number;
     steps?: number;
     tokensIn?: number;
     tokensOut?: number;
@@ -209,6 +227,7 @@ export interface SessionData {
     ctxPct?: number;
     progressSteps?: AgentProgressStep[];
     perf?: AgentPerf;
+    inspectedFiles?: string[];
     /** Path to the agent's full conversation (JSONL) — enables /restore. */
     conversation?: string;
   }[];
@@ -217,6 +236,48 @@ export interface SessionData {
   fileActivity?: FileActivity[];
   workMapWarnings?: WorkMapWarning[];
   changedFiles: string[];
+  projectContext?: {
+    schemaVersion: number;
+    generatedAt?: string;
+    fingerprint?: string;
+    status?: ProjectContextStatus;
+  };
+}
+
+export type ProjectContextStatus = 'idle' | 'indexing' | 'ready' | 'fallback' | 'error';
+
+export interface ProjectContextFile {
+  path: string;
+  hash: string;
+  inspectedAt: string;
+}
+
+export interface ProjectContextWork {
+  agentName: string;
+  task: string;
+  result: string;
+  inspectedFiles: string[];
+  changedFiles: string[];
+  completedAt: string;
+}
+
+export interface ProjectContextData {
+  schemaVersion: 1;
+  generatedAt: string;
+  projectRoot: string;
+  gitHead: string;
+  fingerprint: string;
+  model?: string;
+  architecture: string;
+  entryPoints: string[];
+  conventions: string[];
+  pitfalls: string[];
+  files: ProjectContextFile[];
+  recentWork: ProjectContextWork[];
+  deterministicSeed: string;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number | null;
 }
 
 /** A reusable skill (markdown file) the user can invoke and agents can load. */

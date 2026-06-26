@@ -5,7 +5,7 @@ import { Controller, normalizeShellApprovalMode } from './controller.js';
 import { createSkillTemplate, createSpecialistTemplate } from './skills.js';
 import { isLocalProvider, isPlaceholderModel, providerNeedsApiKey } from './config.js';
 import { t } from './i18n.js';
-import type { AgentInfo, AgentMode, FileChange, WorkMapWarning } from './types.js';
+import type { AgentInfo, AgentMode, ExecutionProfile, FileChange, WorkMapWarning } from './types.js';
 
 export type ViewName =
   | 'agents'
@@ -49,9 +49,9 @@ export interface CommandDef {
 // inspect the session → git safety net → session & config → exit.
 export const COMMANDS: CommandDef[] = [
   // create agents
-  { name: '/ask', args: '[Name:] <question> [--model=m]', descKey: 'cmd.ask', group: 'modes', aliases: ['/a'] },
-  { name: '/task', args: '[Name:] <task> [--model=m] [#skill]', descKey: 'cmd.task', group: 'modes', aliases: ['/t'] },
-  { name: '/plan', args: '[Name:] <task> [--model=m]', descKey: 'cmd.plan', group: 'modes', aliases: ['/p'] },
+  { name: '/ask', args: '[Name:] <question> [--quick|--standard|--deep] [--model=m]', descKey: 'cmd.ask', group: 'modes', aliases: ['/a'] },
+  { name: '/task', args: '[Name:] <task> [--quick|--standard|--deep] [--model=m] [#skill]', descKey: 'cmd.task', group: 'modes', aliases: ['/t'] },
+  { name: '/plan', args: '[Name:] <task> [--quick|--standard|--deep] [--model=m]', descKey: 'cmd.plan', group: 'modes', aliases: ['/p'] },
   { name: '/review', args: '[agent|all] [prompt]', descKey: 'cmd.review', group: 'modes' },
   { name: '/issue', args: '<n>', descKey: 'cmd.issue', group: 'git' },
   { name: '/specialist', args: '<name> <task> | new <name> [global]', descKey: 'cmd.specialist', group: 'modes' },
@@ -79,6 +79,7 @@ export const COMMANDS: CommandDef[] = [
   { name: '/diff', args: '', descKey: 'cmd.diff', group: 'views' },
   { name: '/cost', args: '', descKey: 'cmd.cost', group: 'views' },
   { name: '/status', args: '', descKey: 'cmd.status', group: 'views' },
+  { name: '/memory', args: '[refresh]', descKey: 'cmd.memory', group: 'views' },
   // sessions
   { name: '/save', args: '[name]', descKey: 'cmd.save', group: 'git' },
   { name: '/sessions', args: '', descKey: 'cmd.sessions', group: 'git' },
@@ -219,6 +220,9 @@ async function doctorReport(ctl: Controller, ui: UIActions): Promise<void> {
   }
   lines.push(commandExists('git') ? t('m.doctorGitOk') : t('m.doctorGitMissing'));
   lines.push(commandExists('gh') ? t('m.doctorGhOk') : t('m.doctorGhMissing'));
+  const memory = ctl.projectContextStatus();
+  if (['idle', 'fallback', 'error'].includes(memory.status) && level !== 'error') level = 'warn';
+  lines.push(t('m.doctorMemory', { status: memory.status, date: memory.generatedAt ?? '—' }));
 
   ui.system(t('m.doctorReport', { lines: lines.join('\n') }), level);
 }
@@ -288,11 +292,20 @@ function spawnFrom(
   }
   // optional --model=xxx flag
   let model: string | undefined;
+  let profile: ExecutionProfile | undefined;
   let task = arg;
   const mFlag = task.match(/\s--model=(\S+)/);
   if (mFlag) {
     model = mFlag[1];
     task = task.replace(mFlag[0], '').trim();
+  }
+  for (const candidate of ['quick', 'standard', 'deep'] as const) {
+    const flag = `--${candidate}`;
+    if (new RegExp(`(^|\\s)${flag}(?=\\s|$)`).test(task)) {
+      profile = candidate;
+      task = task.replace(new RegExp(`(^|\\s)${flag}(?=\\s|$)`), ' ').trim();
+      break;
+    }
   }
   // optional #skill tokens → force-load these skills at the start of the task
   const forced: string[] = [];
@@ -311,11 +324,12 @@ function spawnFrom(
   // optional "Name:" prefix
   const named = task.match(/^([\p{L}\p{N}_-]{1,16}):\s+(.+)$/su);
   const finalTask = named ? named[2] : task;
-  const agent = ctl.spawnAgent(finalTask, named ? named[1] : undefined, model, images, specialist, undefined, mode);
+  const agent = ctl.spawnAgent(finalTask, named ? named[1] : undefined, model, images, specialist, undefined, mode, profile);
   if (!agent) return ui.system(specialist ? t('m.noSpecialist', { name: specialist }) : t('m.spawnFail'), 'error');
   ui.system(
     t('m.spawned', { name: agent.name, model: model ? ` (${model})` : '' }) +
       ` /${mode}` +
+      ` [${ctl.board.agents.get(agent.id)?.profile ?? profile ?? 'auto'}]` +
       (specialist ? ` 🎓${specialist}` : '') +
       (forced.length > 0 ? ` 🧩${forced.join(',')}` : ''),
     'info',
@@ -537,6 +551,39 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
     case '/cost':
       ui.setView('cost');
       return;
+    case '/memory': {
+      if (arg && arg !== 'refresh') return ui.system(t('m.usageMemory'), 'warn');
+      if (arg === 'refresh') {
+        ui.system(t('memory.indexing'), 'info');
+        void ctl.refreshProjectContext().then(() => {
+          const memory = ctl.projectContextStatus();
+          ui.system(
+            t('m.memoryStatus', {
+              status: memory.status,
+              date: memory.generatedAt ?? '—',
+              model: memory.model ?? '—',
+              tokens: memory.tokensIn + memory.tokensOut,
+              cost: memory.cost === null ? '—' : memory.cost.toFixed(4),
+            }),
+            memory.status === 'ready' ? 'ok' : 'warn',
+          );
+        });
+        return;
+      }
+      const memory = ctl.projectContextStatus();
+      const index = ctl.projectIndexStatus();
+      ui.system(
+        t('m.memoryStatus', {
+          status: memory.status,
+          date: memory.generatedAt ?? '—',
+          model: memory.model ?? '—',
+          tokens: memory.tokensIn + memory.tokensOut,
+          cost: memory.cost === null ? '—' : memory.cost.toFixed(4),
+        }) + ` · index ${index.files} files/${index.symbols} symbols`,
+        memory.status === 'ready' ? 'ok' : memory.status === 'indexing' ? 'info' : 'warn',
+      );
+      return;
+    }
     case '/status': {
       const p = ctl.sessionProvider();
       const agents = [...ctl.board.agents.values()];
@@ -544,8 +591,25 @@ export function executeInput(raw: string, ctl: Controller, ui: UIActions, images
       const cost = agents.reduce((s, a) => s + (a.cost ?? 0), 0);
       const changed = new Set(ctl.board.changes.map((c) => c.path)).size;
       const pm = p ? `${p.name}:${ctl.session.model}` : '-';
+      const memory = ctl.projectContextStatus();
+      const profiles = agents.reduce<Record<string, number>>((counts, agent) => {
+        counts[agent.profile] = (counts[agent.profile] ?? 0) + 1;
+        return counts;
+      }, {});
       // Multiline: each metric on its own line for readability.
-      ui.system(t('m.status', { pm, approval: ctl.session.approvalMode, total: agents.length, active, changed, cost: cost.toFixed(3) }), 'info');
+      ui.system(
+        t('m.status', {
+          pm,
+          approval: ctl.session.approvalMode,
+          total: agents.length,
+          active,
+          changed,
+          cost: cost.toFixed(3),
+          memory: memory.status,
+          memoryCost: memory.cost === null ? '—' : memory.cost.toFixed(4),
+        }) + `\nProfiles: ${Object.entries(profiles).map(([profile, count]) => `${profile}=${count}`).join(', ') || 'none'}`,
+        'info',
+      );
       return;
     }
     case '/raw':

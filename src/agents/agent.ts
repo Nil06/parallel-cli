@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import * as Diff from 'diff';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { LLMClient } from '../llm/client.js';
@@ -7,8 +8,15 @@ import { ToolExecutor, TOOL_DEFINITIONS, ApprovalCallback, QuestionCallback } fr
 import { costOf } from '../pricing.js';
 import { skillsCatalog } from '../skills.js';
 import { getLang, LANG_NAME_EN, t } from '../i18n.js';
-import { appendFilePrivate, sanitizeForPersistence } from '../security.js';
+import { appendFilePrivate, sanitizeForPersistence, writeFileAtomicPrivate } from '../security.js';
 import type { AgentInfo, AgentMode, AgentPerf, ModelPrice, Skill, Specialist } from '../types.js';
+import type { ExecutionProfile } from '../types.js';
+import {
+  EXECUTION_BUDGETS,
+  nextExecutionProfile,
+  shouldEscalateExecution,
+  type ExecutionBudget,
+} from './execution-policy.js';
 
 // Agent-facing prompts stay in English (canonical for models). Only notes
 // addressed to the user follow the configured UI language.
@@ -20,6 +28,8 @@ const SYSTEM_PROMPT = (
   skillsList: string,
   specialist?: Specialist,
   projectMemory?: string,
+  projectContext?: string,
+  profile: ExecutionProfile = 'standard',
 ) => `You are agent "${name}", an autonomous software engineer inside PARALLEL, an environment where SEVERAL agents work at the same time on the SAME project, each on its own task given by the user.
 ${
   specialist
@@ -35,6 +45,21 @@ ${task}
 </user_task>
 
 AGENT MODE: ${mode}
+EXECUTION PROFILE: ${profile}
+${
+  profile === 'quick'
+    ? `QUICK PROFILE:
+- This task must converge in a few model turns.
+- Do not create a progress checklist unless the task unexpectedly becomes multi-file.
+- Use the task-oriented local index first, batch the smallest relevant inspection, then conclude.
+- Do not spend a turn only updating status or steps.`
+    : profile === 'standard'
+      ? `STANDARD PROFILE:
+- Keep inspection bounded and use a checklist only when there are multiple distinct outcomes.
+- Escalation is justified by discovered cross-file complexity, not by repeated exploration.`
+      : `DEEP PROFILE:
+- Multi-step planning and broader validation are allowed, but every turn must make concrete progress.`
+}
 ${
   mode === 'ask'
     ? `ASK MODE:
@@ -45,8 +70,8 @@ ${
 - Finish with task_complete using this user-facing structure in ${userLang}: "Réponse courte", "Recommandation", "Pourquoi", "Prochaines étapes".`
     : mode === 'plan'
       ? `PLAN MODE:
-- Explore first with read-only tools.
-- Batch independent reads/searches with read_many or inspect_project. Keep exploration broad enough to be correct but bounded.
+- Start from the shared project context. Inspect only the task-relevant files that are unknown, stale, or needed as evidence.
+- Batch independent targeted reads/searches with read_many or inspect_project.
 - Before modifying any file or running mutating commands, call ask_user with a concrete implementation plan.
 - The plan must include steps, files you expect to touch, risks, and validation.
 - Use options ["Approve", "Revise"], recommended "Revise" so timeout never approves changes.
@@ -54,7 +79,7 @@ ${
 - Finish with task_complete using this user-facing structure in ${userLang}: "Plan appliqué", "Ce que j’ai modifié", "Validation", "Risques restants".`
       : `TASK MODE:
 - Execute the user's objective end-to-end.
-- Use this loop: create visible steps, batch inspect, act, batch validate, summarize.
+- Use this loop: create outcome-oriented visible steps, verify the relevant context, act, batch validate, summarize.
 - If the task is a verification/audit and the correct outcome is no file changes, that is valid task work. Say explicitly in task_complete that no modification was necessary and why.
 - Ask the user only when blocked or when a risky product decision cannot be inferred.
 - Finish with task_complete using this user-facing structure in ${userLang}: "Ce que j’ai fait", "Ce que j’ai vérifié", "Résultat", "Détails techniques".`
@@ -76,6 +101,15 @@ ${projectMemory}
 </project_memory>
 `
     : ''
+}${
+  projectContext
+    ? `
+SHARED PROJECT CONTEXT — automatically maintained across agents in this folder:
+<project_context>
+${projectContext}
+</project_context>
+`
+    : ''
 }
 
 UNTRUSTED DATA BOUNDARIES:
@@ -95,7 +129,9 @@ PARALLEL'S PHILOSOPHY — REAL-TIME CO-EDITING, NEVER ANY BLOCKING:
 
 WORK METHOD:
 - For non-trivial work, call update_steps early with 3-6 concrete steps. Keep exactly one step active and mark steps done as you complete them.
-- Explore first before modifying. Decide all independent reads/searches you need, then batch them with read_many or inspect_project instead of calling tools one by one.
+- Do not create a generic "explore the project" step when shared project context already describes the codebase. Steps must state task-specific outcomes.
+- Use shared project context first. Re-read only files directly relevant to the task, files marked stale/unknown, and every file immediately before modifying it.
+- If the shared context is absent or insufficient for the task area, perform a bounded inspection and record durable discoveries.
 - Use run_command for builds/tests/validation and genuinely useful shell scripts. Do NOT spend many turns running grep/head/tail/wc/awk cascades; batch independent shell checks into one labelled command or use inspect_project.
 - Declare your work area with claim_files when you start (and when it changes): it prevents collisions without ever locking anything.
 - If you discover a durable, non-obvious fact about the project (convention, decision, pitfall), save it with remember(fact) for future agents.
@@ -121,11 +157,13 @@ export interface AgentOptions {
   color: string;
   task: string;
   mode: AgentMode;
+  profile?: ExecutionProfile;
   model: string;
   llm: LLMClient;
   board: Blackboard;
   projectRoot: string;
   maxSteps: number;
+  budget?: ExecutionBudget;
   requestApproval: ApprovalCallback;
   requestQuestion: QuestionCallback;
   /** PNG data URIs (data:image/png;base64,...) pasted by the user — multimodal models only. */
@@ -142,6 +180,12 @@ export interface AgentOptions {
   historyFile?: string;
   /** Previous conversation to resume from (loaded from a saved session's JSONL). */
   initialHistory?: ChatCompletionMessageParam[];
+  /** Shared project-context bootstrap, possibly waiting for first indexing. */
+  projectContext?: Promise<string>;
+  /** Called after task_complete so future agents immediately inherit the outcome. */
+  onComplete?: (agentId: string, summary: string) => void;
+  /** Called whenever this agent reads file content. */
+  onInspect?: (agentId: string, relPath: string, content: string) => void;
 }
 
 /** Assumed context window (tokens) when the provider does not advertise one. */
@@ -153,6 +197,12 @@ const EMPTY_PERF: AgentPerf = {
   shellCommands: 0,
   shellMs: 0,
   readOnlyShellCommands: 0,
+  llmMs: 0,
+  compactionTurns: 0,
+  compactionMs: 0,
+  maxPromptTokens: 0,
+  retries: 0,
+  cachedTokens: 0,
 };
 
 function noChangeTaskLine(): string {
@@ -181,19 +231,25 @@ export class Agent {
   private llm: LLMClient;
   private board: Blackboard;
   private maxSteps: number;
+  private budget: ExecutionBudget;
   private abort = new AbortController();
   private paused = false;
   private stopped = false;
   private lastNoteId = 0;
   private lastChangeId = 0;
   private readOnlyShellStreak = 0;
+  private artifactSeq = 0;
+  private convergenceWarned = new Set<ExecutionProfile>();
 
   constructor(private opts: AgentOptions) {
     this.id = opts.id;
     this.name = opts.name;
     this.llm = opts.llm;
     this.board = opts.board;
-    this.maxSteps = opts.maxSteps;
+    const profile = opts.profile ?? (opts.mode === 'plan' ? 'deep' : opts.mode === 'ask' ? 'quick' : 'standard');
+    const budget = opts.budget ?? EXECUTION_BUDGETS[profile];
+    this.maxSteps = Math.min(opts.maxSteps, budget.maxRounds);
+    this.budget = budget;
     this.executor = new ToolExecutor(
       opts.board,
       opts.id,
@@ -203,6 +259,9 @@ export class Agent {
       opts.requestQuestion,
       opts.skills,
       opts.mode,
+      opts.onInspect,
+      profile,
+      budget.maxResultChars,
     );
 
     const info: AgentInfo = {
@@ -212,6 +271,7 @@ export class Agent {
       color: opts.color,
       task: opts.task,
       mode: opts.mode,
+      profile,
       model: opts.model,
       state: 'idle',
       currentAction: '',
@@ -347,13 +407,62 @@ export class Agent {
     const current = this.board.agents.get(this.id)?.perf ?? EMPTY_PERF;
     this.board.updateAgent(this.id, {
       perf: {
-        modelTurns: current.modelTurns + (delta.modelTurns ?? 0),
-        toolCalls: current.toolCalls + (delta.toolCalls ?? 0),
-        shellCommands: current.shellCommands + (delta.shellCommands ?? 0),
-        shellMs: current.shellMs + (delta.shellMs ?? 0),
-        readOnlyShellCommands: current.readOnlyShellCommands + (delta.readOnlyShellCommands ?? 0),
+        modelTurns: (current.modelTurns ?? 0) + (delta.modelTurns ?? 0),
+        toolCalls: (current.toolCalls ?? 0) + (delta.toolCalls ?? 0),
+        shellCommands: (current.shellCommands ?? 0) + (delta.shellCommands ?? 0),
+        shellMs: (current.shellMs ?? 0) + (delta.shellMs ?? 0),
+        readOnlyShellCommands: (current.readOnlyShellCommands ?? 0) + (delta.readOnlyShellCommands ?? 0),
+        llmMs: (current.llmMs ?? 0) + (delta.llmMs ?? 0),
+        compactionTurns: (current.compactionTurns ?? 0) + (delta.compactionTurns ?? 0),
+        compactionMs: (current.compactionMs ?? 0) + (delta.compactionMs ?? 0),
+        maxPromptTokens: Math.max(current.maxPromptTokens ?? 0, delta.maxPromptTokens ?? 0),
+        retries: (current.retries ?? 0) + (delta.retries ?? 0),
+        cachedTokens: (current.cachedTokens ?? 0) + (delta.cachedTokens ?? 0),
       },
     });
+  }
+
+  private boundedHistory(): ChatCompletionMessageParam[] {
+    const limit = this.budget.maxRecentMessages;
+    if (this.history.length <= limit) return this.history;
+    let cut = Math.max(1, this.history.length - limit);
+    while (cut < this.history.length && (this.history[cut] as any).role === 'tool') cut++;
+    const removed = this.history.slice(1, cut) as any[];
+    const actions: string[] = [];
+    for (const message of removed) {
+      if (message.role === 'assistant' && Array.isArray(message.tool_calls)) {
+        for (const call of message.tool_calls) {
+          actions.push(`${call.function?.name ?? 'tool'}(${String(call.function?.arguments ?? '').slice(0, 100)})`);
+        }
+      } else if (message.role === 'tool') {
+        actions.push(`result: ${String(message.content ?? '').replace(/\s+/g, ' ').slice(0, 140)}`);
+      }
+      if (actions.length >= 24) break;
+    }
+    return [
+      this.history[0],
+      {
+        role: 'user',
+        content: `[DETERMINISTIC WORK LEDGER — older raw outputs omitted]\n${actions.map((item) => `- ${item}`).join('\n') || '- Earlier context omitted.'}`,
+      },
+      ...this.history.slice(cut),
+    ];
+  }
+
+  private maybeEscalate(): boolean {
+    const next = nextExecutionProfile(this.budget.profile);
+    if (!next) return false;
+    const info = this.board.agents.get(this.id);
+    const changedFiles = new Set(this.board.changes.filter((change) => change.agentId === this.id).map((change) => change.path)).size;
+    if (!shouldEscalateExecution(this.opts.task, info?.inspectedFiles?.length ?? 0, changedFiles)) return false;
+    this.budget = EXECUTION_BUDGETS[next];
+    this.maxSteps = Math.min(this.opts.maxSteps, this.budget.maxRounds);
+    this.board.updateAgent(this.id, { profile: next, currentAction: `budget escalated to ${next}` });
+    this.record({
+      role: 'user',
+      content: `[EXECUTION PROFILE ESCALATED TO ${next.toUpperCase()}] Concrete task complexity justified more budget. Continue with targeted work; repeated exploration is not justification for another escalation.`,
+    });
+    return true;
   }
 
   /**
@@ -362,6 +471,9 @@ export class Agent {
    * Returns { text, hasNews } — hasNews drives the 'listening' state.
    */
   private liveContext(): { text: string; hasNews: boolean } {
+    if (this.board.agents.size <= 1) {
+      return { text: '[REAL TIME] No other active agent context. Continue with the smallest useful next action.', hasNews: false };
+    }
     let hasNews = false;
     const parts: string[] = ['[REAL TIME]', this.board.snapshotFor(this.id)];
 
@@ -404,6 +516,13 @@ export class Agent {
   }
 
   async run(): Promise<void> {
+    this.board.setAgentState(this.id, 'working', 'loading project memory');
+    let sharedProjectContext = '';
+    try {
+      sharedProjectContext = (await this.opts.projectContext) ?? '';
+    } catch {
+      sharedProjectContext = '';
+    }
     this.board.setAgentState(this.id, 'working', 'starting');
     if (this.opts.initialHistory && this.opts.initialHistory.length > 0) {
       // Resume a previous conversation (/restore): re-record everything into
@@ -412,8 +531,9 @@ export class Agent {
       for (const m of this.opts.initialHistory) this.record(m);
       this.record({
         role: 'user',
-        content:
-          '[SESSION RESTORED] This conversation was saved and has just been restored. Time has passed: files may have changed on disk. Re-read the files you rely on before editing them, then continue your task from where you left off.',
+        content: `[SESSION RESTORED] This conversation was saved and has just been restored. Continue from where you left off. Use the shared project context below to identify what changed, and re-read only task-relevant files marked stale or files you are about to modify.
+
+${sharedProjectContext}`,
       });
     } else {
       this.record({
@@ -426,6 +546,8 @@ export class Agent {
           skillsCatalog(this.opts.skills),
           this.opts.specialist,
           this.opts.projectMemory,
+          sharedProjectContext,
+          this.budget.profile,
         ),
       });
       // Pasted images (multimodal models): attached to the very first user turn.
@@ -449,9 +571,24 @@ export class Agent {
    */
   private async loop(): Promise<void> {
     let steps = 0;
+    let closingTurnGranted = false;
     try {
       this.finished = false;
-      while (!this.stopped && steps < this.maxSteps) {
+      while (!this.stopped) {
+        if (steps >= this.maxSteps) {
+          if (this.maybeEscalate()) continue;
+          if (!closingTurnGranted) {
+            closingTurnGranted = true;
+            this.maxSteps++;
+            this.record({
+              role: 'user',
+              content:
+                '[FINAL BUDGET TURN] Do not inspect further. Call task_complete now with the strongest conclusion supported by current evidence, explicitly stating any remaining uncertainty.',
+            });
+            continue;
+          }
+          break;
+        }
         await this.waitWhilePaused();
         if (this.stopped) break;
         steps++;
@@ -470,12 +607,11 @@ export class Agent {
         if (live.hasNews) {
           // Visible (and audible via state event) cue: the agent is listening to the others.
           this.board.setAgentState(this.id, 'listening', 'reading the other agents’ work…');
-          await new Promise((r) => setTimeout(r, 600));
           if (this.stopped) break;
         }
         this.repairToolCallHistory();
         const messages: ChatCompletionMessageParam[] = [
-          ...this.history,
+          ...this.boundedHistory(),
           { role: 'user', content: live.text },
         ];
 
@@ -486,8 +622,12 @@ export class Agent {
         const onStop = () => this.llmAbort?.abort();
         this.abort.signal.addEventListener('abort', onStop, { once: true });
         let res;
+        const llmStartedAt = Date.now();
         try {
-          res = await this.llm.chat(messages, TOOL_DEFINITIONS, this.llmAbort.signal);
+          res = await this.llm.chat(messages, TOOL_DEFINITIONS, this.llmAbort.signal, {
+            maxTokens: this.budget.profile === 'quick' ? 2_048 : 4_096,
+            timeoutMs: this.budget.profile === 'quick' ? 45_000 : this.budget.profile === 'standard' ? 90_000 : 180_000,
+          });
         } catch (err) {
           if (!this.stopped && this.steered) {
             // Interrupted on purpose (steering/nudge): not an error — retry the
@@ -503,7 +643,13 @@ export class Agent {
           this.llmAbort = null;
         }
         this.steered = false;
-        this.updatePerf({ modelTurns: 1 });
+        this.updatePerf({
+          modelTurns: 1,
+          llmMs: Date.now() - llmStartedAt,
+          maxPromptTokens: res.tokensIn,
+          retries: res.retries,
+          cachedTokens: res.cachedTokens,
+        });
         const a = this.board.agents.get(this.id);
         if (a) {
           // Real-time financial view: accrue the cost of this round immediately.
@@ -515,6 +661,20 @@ export class Agent {
             // res.tokensIn = prompt tokens of THIS round = the whole conversation
             // sent to the model → direct estimate of context-window usage.
             ctxPct: Math.min(100, Math.round((res.tokensIn / CONTEXT_WINDOW) * 100)),
+          });
+        }
+        const currentPerf = this.board.agents.get(this.id)?.perf;
+        const budgetRatio = Math.max(
+          steps / this.budget.maxRounds,
+          (this.board.agents.get(this.id)?.tokensIn ?? 0) / this.budget.maxInputTokens,
+          (currentPerf?.toolCalls ?? 0) / this.budget.maxToolCalls,
+        );
+        if (budgetRatio >= this.budget.convergenceAt && !this.convergenceWarned.has(this.budget.profile)) {
+          this.convergenceWarned.add(this.budget.profile);
+          this.record({
+            role: 'user',
+            content:
+              '[BUDGET CONVERGENCE] You are approaching this execution profile budget. Stop broad exploration. Use the evidence already collected, perform at most one targeted verification, then call task_complete.',
           });
         }
 
@@ -578,10 +738,30 @@ export class Agent {
 
           const shellStartedAt = tc.function.name === 'run_command' ? Date.now() : 0;
           let result: string;
+          const perfBefore = this.board.agents.get(this.id)?.perf;
+          if ((perfBefore?.toolCalls ?? 0) >= this.budget.maxToolCalls) {
+            result = 'BUDGET: tool-call limit reached. Conclude with the evidence already collected.';
+          } else if (tc.function.name === 'run_command' && (perfBefore?.shellCommands ?? 0) >= this.budget.maxShellCommands) {
+            result = 'BUDGET: shell-command limit reached. Use existing evidence or a non-shell targeted tool, then conclude.';
+          } else {
           try {
             result = await this.executor.execute(tc.function.name, args);
           } catch (err: any) {
             result = `ERROR: ${err?.message ?? String(err)}`;
+          }
+          }
+          if (result.length > this.budget.maxResultChars) {
+            const artifactId = `artifact-${++this.artifactSeq}.txt`;
+            const artifactFile = path.join(this.opts.projectRoot, '.parallel', 'runs', this.id, 'artifacts', artifactId);
+            try {
+              writeFileAtomicPrivate(artifactFile, result);
+              result =
+                `${result.slice(0, this.budget.maxResultChars)}\n` +
+                `... (${result.length.toLocaleString()} characters total; full output stored as ${artifactId}. ` +
+                `Use read_artifact with this id and a targeted line range if more evidence is required.)`;
+            } catch {
+              result = `${result.slice(0, this.budget.maxResultChars)}\n... (truncated by execution budget)`;
+            }
           }
           const shellMs = shellStartedAt ? Date.now() - shellStartedAt : 0;
           const readOnlyShell = tc.function.name === 'run_command' && isReadOnlyShell(String(args.command ?? ''));
@@ -617,6 +797,7 @@ export class Agent {
               lastResult: `${noChangePrefix}${summary}`,
               progressSteps: (this.board.agents.get(this.id)?.progressSteps ?? []).map((s) => ({ ...s, status: 'done' })),
             });
+            this.opts.onComplete?.(this.id, summary);
             // ONE short headline note (the full summary lives in lastResult and
             // is rendered as the agent's recap) — no duplicated walls of text.
             const headline = summary.split('\n').find((l) => l.trim())?.trim() ?? 'Task complete.';
@@ -640,7 +821,7 @@ export class Agent {
           this.board.setAgentState(this.id, 'done', 'done ✅');
           return;
         }
-        await this.compactHistory();
+        if (this.budget.profile === 'deep') await this.compactHistory();
       }
 
       if (!this.stopped) {
@@ -664,6 +845,8 @@ export class Agent {
         return `📖 read ${args.path}`;
       case 'read_many':
         return `📚 read ${Array.isArray(args.paths) ? args.paths.slice(0, 3).join(', ') : 'files'}`;
+      case 'read_artifact':
+        return `📖 artifact ${args.id}`;
       case 'write_file':
         return `✏ write ${args.path}`;
       case 'edit_file':
@@ -752,6 +935,7 @@ export class Agent {
 
       this.board.updateAgent(this.id, { currentAction: t('agent.compactingShort') });
       this.board.log(this.id, 'memory', t('agent.compactingStart'));
+      const compactStartedAt = Date.now();
       const res = await this.llm.chat(
         [
           {
@@ -764,6 +948,11 @@ export class Agent {
         undefined,
         this.abort.signal,
       );
+      this.updatePerf({
+        compactionTurns: 1,
+        compactionMs: Date.now() - compactStartedAt,
+        maxPromptTokens: res.tokensIn,
+      });
       const a = this.board.agents.get(this.id);
       if (a) {
         const price = this.opts.price;

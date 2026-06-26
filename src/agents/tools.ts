@@ -4,7 +4,7 @@ import { exec } from 'node:child_process';
 import * as Diff from 'diff';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import { Blackboard } from '../coordination/blackboard.js';
-import type { AgentMode, AgentProgressStep, Skill } from '../types.js';
+import type { AgentMode, AgentProgressStep, ExecutionProfile, Skill } from '../types.js';
 import { appendFilePrivate, ensurePrivateDir, sanitizeTerminalText, writeFileAtomicPrivate } from '../security.js';
 
 const IGNORED = new Set(['node_modules', '.git', '.parallel', '.cursor', 'dist', '__pycache__', '.venv', 'venv']);
@@ -29,7 +29,7 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
     function: {
       name: 'list_files',
       description:
-        'List project files (recursive, ignores node_modules/.git/dist). Use it first to understand the structure.',
+        'List project files (recursive, ignores node_modules/.git/dist). Use only when shared project context does not already identify the relevant area.',
       parameters: {
         type: 'object',
         properties: {
@@ -48,6 +48,8 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Relative file path' },
+          startLine: { type: 'integer', description: 'Optional first line, 1-based' },
+          endLine: { type: 'integer', description: 'Optional last line, inclusive' },
         },
         required: ['path'],
       },
@@ -69,6 +71,22 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
           },
         },
         required: ['paths'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_artifact',
+      description: 'Read a targeted line range from a long tool output previously stored as an artifact.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Artifact id returned by a previous tool result' },
+          startLine: { type: 'integer', description: 'First line, 1-based' },
+          lineCount: { type: 'integer', description: 'Number of lines, max 200' },
+        },
+        required: ['id'],
       },
     },
   },
@@ -125,7 +143,7 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
     function: {
       name: 'inspect_project',
       description:
-        'Batch read-only inspection: list files under paths and/or run several regex searches in one call. Prefer this over cascades of grep/head/tail/wc/awk for exploratory checks.',
+        'Batch targeted read-only inspection: list files under task-relevant paths and/or run several regex searches in one call. Prefer this over generic repository exploration or cascades of grep/head/tail/wc/awk.',
       parameters: {
         type: 'object',
         properties: {
@@ -194,7 +212,7 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
     function: {
       name: 'update_steps',
       description:
-        'Update the visible Cursor-style task checklist. At task start create 3-6 concrete steps; during work keep exactly one active step and mark completed steps done.',
+        'Update the visible Cursor-style task checklist. At task start create 3-6 outcome-oriented steps; do not add a generic project-exploration step when shared context already covers it. Keep exactly one active step.',
       parameters: {
         type: 'object',
         properties: {
@@ -351,6 +369,9 @@ export class ToolExecutor {
     private requestQuestion: QuestionCallback,
     private skills: Skill[],
     private mode: AgentMode = 'task',
+    private onInspect?: (agentId: string, relPath: string, content: string) => void,
+    private profile: ExecutionProfile = 'standard',
+    private maxOutput = MAX_OUTPUT,
   ) {}
 
   private resolve(rel: string): string {
@@ -369,6 +390,7 @@ export class ToolExecutor {
 
   private rememberRead(relPath: string, content: string): void {
     this.lastRead.set(relPath, { content, revision: this.board.fileRevision(relPath) });
+    this.onInspect?.(this.agentId, relPath, content);
   }
 
   private adaptationMessage(relPath: string, seen: FileReadBaseline, current: string, verb = 'was modified'): string {
@@ -443,9 +465,11 @@ export class ToolExecutor {
         case 'list_files':
           return this.listFiles(args?.path ?? '.');
         case 'read_file':
-          return this.readFile(args.path);
+          return this.readFile(args.path, args?.startLine, args?.endLine);
         case 'read_many':
           return this.readMany(args.paths);
+        case 'read_artifact':
+          return this.readArtifact(args.id, args?.startLine, args?.lineCount);
         case 'write_file':
           return this.writeFile(args.path, args.content);
         case 'edit_file':
@@ -639,16 +663,18 @@ export class ToolExecutor {
     return out.join('\n');
   }
 
-  private readFile(rel: string): string {
+  private readFile(rel: string, requestedStart?: number, requestedEnd?: number): string {
     const abs = this.resolve(rel);
     const relPath = this.relOf(rel);
     const content = fs.readFileSync(abs, 'utf8');
     this.rememberRead(relPath, content);
     this.board.resolveConflict(relPath);
     const lines = content.split('\n');
-    const numbered = lines.map((l, i) => `${String(i + 1).padStart(4)}|${l}`).join('\n');
-    return numbered.length > MAX_OUTPUT
-      ? numbered.slice(0, MAX_OUTPUT) + `\n... (truncated, ${lines.length} lines total)`
+    const start = Math.max(1, Math.floor(Number(requestedStart) || 1));
+    const end = Math.min(lines.length, Math.max(start, Math.floor(Number(requestedEnd) || lines.length)));
+    const numbered = lines.slice(start - 1, end).map((l, i) => `${String(start + i).padStart(4)}|${l}`).join('\n');
+    return numbered.length > this.maxOutput
+      ? numbered.slice(0, this.maxOutput) + `\n... (truncated; requested ${start}-${end}, ${lines.length} lines total)`
       : numbered;
   }
 
@@ -665,8 +691,9 @@ export class ToolExecutor {
         this.board.resolveConflict(relPath);
         const lines = content.split('\n');
         const numbered = lines.map((l, i) => `${String(i + 1).padStart(4)}|${l}`).join('\n');
-        const body = numbered.length > Math.floor(MAX_OUTPUT / relPaths.length)
-          ? numbered.slice(0, Math.floor(MAX_OUTPUT / relPaths.length)) + `\n... (truncated, ${lines.length} lines total)`
+        const perFile = Math.max(1_000, Math.floor(this.maxOutput / relPaths.length));
+        const body = numbered.length > perFile
+          ? numbered.slice(0, perFile) + `\n... (truncated, ${lines.length} lines total)`
           : numbered;
         chunks.push(`--- ${relPath} (${lines.length} lines) ---\n${body}`);
       } catch (err: any) {
@@ -674,6 +701,18 @@ export class ToolExecutor {
       }
     }
     return chunks.join('\n\n');
+  }
+
+  private readArtifact(id: string, requestedStart?: number, requestedCount?: number): string {
+    const safeId = String(id ?? '');
+    if (!/^artifact-\d+\.txt$/.test(safeId)) return 'ERROR: invalid artifact id.';
+    const file = path.join(this.projectRoot, '.parallel', 'runs', this.agentId, 'artifacts', safeId);
+    if (!fs.existsSync(file)) return `ERROR: artifact not found: ${safeId}`;
+    const lines = fs.readFileSync(file, 'utf8').split('\n');
+    const start = Math.max(1, Math.floor(Number(requestedStart) || 1));
+    const count = Math.min(200, Math.max(1, Math.floor(Number(requestedCount) || 80)));
+    const end = Math.min(lines.length, start + count - 1);
+    return lines.slice(start - 1, end).map((line, index) => `${String(start + index).padStart(4)}|${line}`).join('\n');
   }
 
   /**
@@ -760,7 +799,8 @@ export class ToolExecutor {
     }
     const results: string[] = [];
     const walk = (dir: string, depth: number) => {
-      if (depth > 6 || results.length > 100) return;
+      const resultLimit = this.profile === 'quick' ? 40 : this.profile === 'standard' ? 80 : 150;
+      if (depth > 6 || results.length >= resultLimit) return;
       let entries: fs.Dirent[];
       try {
         entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -782,11 +822,14 @@ export class ToolExecutor {
             continue;
           }
           const lines = content.split('\n');
-          for (let i = 0; i < lines.length && results.length <= 100; i++) {
+          let matched = false;
+          for (let i = 0; i < lines.length && results.length < resultLimit; i++) {
             if (re.test(lines[i])) {
+              matched = true;
               results.push(`${path.relative(this.projectRoot, full)}:${i + 1}: ${lines[i].trim().slice(0, 160)}`);
             }
           }
+          if (matched) this.onInspect?.(this.agentId, path.relative(this.projectRoot, full), content);
         }
       }
     };
@@ -839,11 +882,16 @@ export class ToolExecutor {
         return;
       }
       const lines = content.split('\n');
+      let matched = false;
       for (let i = 0; i < lines.length && matches.length <= 200; i++) {
         for (const { raw, re } of regexes) {
-          if (re.test(lines[i])) matches.push(`${raw} :: ${relPath}:${i + 1}: ${lines[i].trim().slice(0, 140)}`);
+          if (re.test(lines[i])) {
+            matched = true;
+            matches.push(`${raw} :: ${relPath}:${i + 1}: ${lines[i].trim().slice(0, 140)}`);
+          }
         }
       }
+      if (matched) this.onInspect?.(this.agentId, relPath, content);
     };
     for (const rel of paths) visit(this.resolve(rel), 0);
     const fileBlock = files.length > 0 ? files.slice(0, 80).join('\n') : '(no files)';
@@ -871,10 +919,12 @@ export class ToolExecutor {
           if (stderr) out += (out ? '\n--- stderr ---\n' : '') + sanitizeTerminalText(stderr);
           if (err && (err as any).killed) out += '\n(process killed: 120s timeout)';
           else if (err) out += `\n(exit code: ${(err as any).code ?? 1})`;
-          if (out.length > MAX_OUTPUT) out = out.slice(0, MAX_OUTPUT) + '\n... (output truncated)';
           const result = out || '(no output, success)';
           const changed = this.recordShellMutations(before);
-          this.board.log(this.agentId, 'tool_result', result);
+          const logged = result.length > this.maxOutput
+            ? `${result.slice(0, this.maxOutput)}\n... (${result.length.toLocaleString()} characters; full output retained as an agent artifact)`
+            : result;
+          this.board.log(this.agentId, 'tool_result', logged);
           resolve(changed > 0 ? `${result}\n\nTracked shell mutations: ${changed} file${changed === 1 ? '' : 's'}.` : result);
         },
       );

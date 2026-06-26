@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Box, Text } from 'ink';
 import { Controller } from '../controller.js';
 import { createSkillTemplate, createSpecialistTemplate } from '../skills.js';
@@ -30,6 +30,14 @@ type Step =
   | { id: 'providers'; scope: 'global' | 'session' }
   | { id: 'providerDetail'; provider: ProviderConfig; scope: 'global' | 'session' }
   | { id: 'removeProvider'; provider: ProviderConfig; scope: 'global' | 'session' };
+
+type SettingsSelectListProps = React.ComponentProps<typeof BaseSelectList> & {
+  defaultBack: () => void;
+};
+
+function SettingsSelectList({ defaultBack, onBack, ...rest }: SettingsSelectListProps) {
+  return <BaseSelectList {...rest} onBack={onBack ?? defaultBack} />;
+}
 
 function masked(key: string): string {
   if (!key) return '—';
@@ -72,15 +80,11 @@ export function SettingsPanel({
   const saved = () => setFlash(t('set.saved'));
   const cfg = ctl.config;
   const listHeight = height ? Math.max(3, height - 5) : undefined;
-  const goBack = () => {
+  const goBack = useCallback(() => {
     if (step.id === 'root') return onClose();
     setStep(returnStep ?? { id: 'root' });
     setReturnStep(null);
-  };
-  const SelectList = (props: React.ComponentProps<typeof BaseSelectList>) => {
-    const { onBack, ...rest } = props;
-    return <BaseSelectList {...rest} onBack={onBack ?? goBack} />;
-  };
+  }, [onClose, returnStep, step.id]);
 
   // ---- root menu items ----
 
@@ -198,11 +202,12 @@ export function SettingsPanel({
       {flash ? <Text color="green">{flash}</Text> : null}
       <Box flexDirection="column" marginTop={1}>
         {/* ---- root ---- */}
-        {step.id === 'root' && <SelectList items={rootItems} height={listHeight} onSelect={chooseRoot} />}
+        {step.id === 'root' && <SettingsSelectList defaultBack={goBack} items={rootItems} height={listHeight} onSelect={chooseRoot} />}
 
         {/* ---- language ---- */}
         {step.id === 'lang' && (
-          <SelectList
+          <SettingsSelectList
+            defaultBack={goBack}
             items={LANGS.map((l) => ({ label: l.label, value: l.code }))}
             height={listHeight}
             onSelect={(code) => {
@@ -218,7 +223,8 @@ export function SettingsPanel({
         {step.id === 'pickProvider' && (
           <>
             <Text color="gray">{t('set.chooseProvider')}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[
                 ...cfg.providers.map((p) => ({ label: p.name, value: p.name, hint: `(${p.baseUrl})` })),
                 { label: t('set.back'), value: '__back__' },
@@ -240,7 +246,8 @@ export function SettingsPanel({
         {step.id === 'model' && (
           <>
             <Text color="gray">{t('set.chooseModel', { name: step.provider.name })}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[
                 ...step.provider.models.map((m) => ({
                   label: m,
@@ -271,7 +278,8 @@ export function SettingsPanel({
             <Text color="gray">{t('wiz.provider.endpoint.title', { name: step.provider.name })}</Text>
             <Text color="gray">{step.provider.baseUrl}</Text>
             <Text color="gray">{t('wiz.provider.endpoint.model', { model: step.provider.defaultModel || step.provider.models[0] || '—' })}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[
                 { label: t('wiz.provider.endpoint.use'), value: 'use' },
                 { label: t('wiz.provider.endpoint.edit'), value: 'edit' },
@@ -303,7 +311,8 @@ export function SettingsPanel({
         {step.id === 'setupScope' && (
           <>
             <Text color="gray">{t('set.setupScope.title', { name: step.provider.name })}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[
                 { label: t('set.setupScope.session'), value: 'session' },
                 { label: t('set.setupScope.global'), value: 'global' },
@@ -322,7 +331,8 @@ export function SettingsPanel({
         {step.id === 'editEndpoint' && (
           <>
             <Text color="gray">{t('wiz.provider.url.title')}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[]}
               height={listHeight}
               allowInput
@@ -339,7 +349,8 @@ export function SettingsPanel({
         {step.id === 'modelList' && (
           <>
             <Text color="gray">{t('set.modelsFor', { name: step.provider.name })}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[
                 ...step.provider.models.map((m) => ({
                   label: m,
@@ -383,7 +394,8 @@ export function SettingsPanel({
         {step.id === 'priceModel' && (
           <>
             <Text color="gray">{t('set.priceModel', { name: step.provider.name })}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[
                 ...step.provider.models.map((m) => {
                   const pr = priceFor(step.provider, m);
@@ -417,7 +429,8 @@ export function SettingsPanel({
         {step.id === 'priceValue' && (
           <>
             <Text color="gray">{t('set.priceValue', { model: step.model })}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[]}
               height={listHeight}
               allowInput
@@ -442,7 +455,8 @@ export function SettingsPanel({
         {step.id === 'key' && (
           <>
             <Text color="gray">{t('wiz.provider.key.title', { name: step.provider.name })}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[]}
               height={listHeight}
               allowInput
@@ -472,7 +486,8 @@ export function SettingsPanel({
         {step.id === 'newName' && (
           <>
             <Text color="gray">{t('wiz.provider.name.title')}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[]}
               height={listHeight}
               allowInput
@@ -484,7 +499,8 @@ export function SettingsPanel({
         {step.id === 'newUrl' && (
           <>
             <Text color="gray">{t('wiz.provider.url.title')}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[]}
               height={listHeight}
               allowInput
@@ -496,7 +512,8 @@ export function SettingsPanel({
         {step.id === 'newModel' && (
           <>
             <Text color="gray">{t('wiz.provider.model.title')}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[]}
               height={listHeight}
               allowInput
@@ -527,7 +544,8 @@ export function SettingsPanel({
         {step.id === 'newKey' && (
           <>
             <Text color="gray">{t('wiz.provider.key.title', { name: step.name })}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[]}
               height={listHeight}
               allowInput
@@ -542,7 +560,8 @@ export function SettingsPanel({
         {step.id === 'newSkill' && (
           <>
             <Text color="gray">{t('set.newSkillName')}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[]}
               height={listHeight}
               allowInput
@@ -562,7 +581,8 @@ export function SettingsPanel({
         {step.id === 'newSpecialist' && (
           <>
             <Text color="gray">{t('set.newSpecialistName')}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[]}
               height={listHeight}
               allowInput
@@ -586,7 +606,8 @@ export function SettingsPanel({
             <Text color="gray">
               {step.scope === 'global' ? t('set.providers.title') : t('sset.providers.title')}
             </Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={(() => {
                 const configuredNames = new Set(cfg.providers.map((p) => p.name.toLowerCase()));
                 const items: SelectItem[] = [];
@@ -704,7 +725,8 @@ export function SettingsPanel({
         {step.id === 'providerDetail' && (
           <>
             <Text color="gray">{t('set.providerDetail.title', { name: step.provider.name })}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[
                 {
                   label: t('set.providerDetail.key'),
@@ -782,7 +804,8 @@ export function SettingsPanel({
           <>
             <Text color="gray">{t('set.removeProvider.title', { name: step.provider.name })}</Text>
             <Text color="yellow">{t('set.removeProvider.confirm')}</Text>
-            <SelectList
+            <SettingsSelectList
+              defaultBack={goBack}
               items={[
                 { label: t('set.removeProvider.yes'), value: 'yes' },
                 { label: t('set.removeProvider.no'), value: 'no' },

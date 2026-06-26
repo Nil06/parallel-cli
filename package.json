@@ -1,6 +1,6 @@
 {
   "name": "@parallel-cli/parallel",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "description": "Real-time coding agents that work like a live team on one shared repository.",
   "keywords": [
     "cli",
@@ -48,7 +48,7 @@
   "scripts": {
     "build": "tsc && chmod +x dist/index.js",
     "dev": "tsc --watch",
-    "test": "npm run build && ( [ -d test ] && node --test test/*.test.mjs && npm run test:pty || echo 'test/ directory not found, skipping tests' )",
+    "test": "npm run build && if [ -d test ]; then node --test test/*.test.mjs && npm run test:pty; else echo 'test/ directory not found, skipping tests'; fi",
     "test:pty": "sh test/pty.sh",
     "start": "node dist/index.js",
     "prepublishOnly": "npm run build"

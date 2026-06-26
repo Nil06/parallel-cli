@@ -2,6 +2,39 @@
 
 All notable changes to Parallel are documented here.
 
+## 0.5.0 - 2026-06-25
+
+### 0.5.0 Added
+
+- Added an automatically generated, versioned project context in `.parallel/project-context.json`, shared by every new agent in the same folder.
+- Added targeted freshness tracking for files inspected by agents, including content hashes and stale-file warnings.
+- Added visible project-memory indexing, deterministic fallback, token/cost accounting, `/memory`, and `/memory refresh`.
+- Added restored-session summaries directly to new-agent bootstrap context instead of relying on historical notes.
+- Added an agent performance diagnostician and deterministic simulator for model rounds, tool churn, shell micro-commands, repeated reads, hidden compactions, and context amplification.
+- Added adaptive Quick, Standard, and Deep execution profiles with visible badges and `--quick`, `--standard`, and `--deep` overrides.
+- Added a persistent incremental lexical/symbol index under `.parallel/index/` and task-oriented retrieval before the first model call.
+- Added targeted line-range reads, bounded tool output artifacts, provider retry/cache telemetry, and runtime convergence budgets.
+
+### 0.5.0 Changed
+
+- New agents now start from shared architecture, conventions, pitfalls, entry points, and recent work instead of treating the repository as unknown.
+- Replaced generic “explore first” prompting with targeted verification of relevant, unknown, stale, or soon-to-be-modified files.
+- Kept full conversations isolated per agent; `/restore` remains the explicit path for exact conversation continuity.
+- Session snapshots now record inspected files and project-context metadata while remaining compatible with older snapshots.
+- Agent telemetry now records provider wait time, hidden compaction time/calls, and peak prompt tokens.
+- Quick and Standard agents now keep a bounded recent window plus a deterministic work ledger instead of repeatedly sending every raw tool result.
+- Project-memory enrichment now runs in the background; startup no longer waits up to 20 seconds before useful work can begin.
+- Ordinary inter-agent notes are batched for the next natural turn instead of aborting an in-flight model request.
+- Included stable Settings and Wizard list navigation/windowing fixes.
+
+### 0.5.0 Fixed
+
+- Fixed newly spawned agents ignoring all useful work, notes, and conclusions that existed before their creation.
+- Fixed loaded-session summaries being added to the blackboard and then skipped by the next agent’s note cursor.
+- Fixed repetitive generic “Explore the project” progress steps when a valid project map already exists.
+- Fixed simple investigations inheriting the same 60-turn allowance as long-running plans.
+- Fixed large command and inspection results remaining in every later prompt.
+
 ## 0.4.9 - 2026-06-24
 
 ### 0.4.9 Added

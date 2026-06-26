@@ -9,6 +9,13 @@ export interface ChatResult {
   message: ChatCompletionMessage;
   tokensIn: number;
   tokensOut: number;
+  cachedTokens: number;
+  retries: number;
+}
+
+export interface LLMRequestOptions {
+  maxTokens?: number;
+  timeoutMs?: number;
 }
 
 export class LLMClient {
@@ -28,8 +35,10 @@ export class LLMClient {
     messages: ChatCompletionMessageParam[],
     tools?: ChatCompletionTool[],
     signal?: AbortSignal,
+    options: LLMRequestOptions = {},
   ): Promise<ChatResult> {
     let lastErr: unknown;
+    let retries = 0;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
         const res = await this.client.chat.completions.create(
@@ -38,9 +47,9 @@ export class LLMClient {
             messages,
             tools: tools && tools.length > 0 ? tools : undefined,
             temperature: 0.2,
-            max_tokens: 4096,
+            max_tokens: options.maxTokens ?? 4096,
           },
-          { signal },
+          { signal, timeout: options.timeoutMs },
         );
         const choice = res.choices[0];
         if (!choice?.message) throw new Error('Empty response from model');
@@ -48,6 +57,8 @@ export class LLMClient {
           message: choice.message,
           tokensIn: res.usage?.prompt_tokens ?? 0,
           tokensOut: res.usage?.completion_tokens ?? 0,
+          cachedTokens: Number((res.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0),
+          retries,
         };
       } catch (err: any) {
         lastErr = err;
@@ -56,6 +67,7 @@ export class LLMClient {
         const retriable =
           status === 429 || (typeof status === 'number' && status >= 500) || err?.code === 'ECONNRESET';
         if (!retriable || attempt === 3) throw err;
+        retries++;
         await new Promise((r) => setTimeout(r, 1500 * Math.pow(2, attempt)));
       }
     }

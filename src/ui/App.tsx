@@ -987,7 +987,7 @@ function MainScreen({
         ) : view === 'diff' ? (
           <DiffView board={ctl.board} bodyHeight={bodyHeight} />
         ) : view === 'cost' ? (
-          <CostView board={ctl.board} bodyHeight={bodyHeight} />
+          <CostView ctl={ctl} bodyHeight={bodyHeight} />
         ) : view === 'skills' ? (
           <SkillsView skills={ctl.getSkills()} bodyHeight={bodyHeight} />
         ) : view === 'specialists' ? (
@@ -1080,6 +1080,12 @@ function MainScreen({
             UI.ok
           }>{ctl.session.approvalMode === 'auto-safe' ? 'auto' : ctl.session.approvalMode}</Text>
           {agents.length > 0 ? <Text color={CHROME.muted}> · Sessions {Controller.listSessions(ctl.projectRoot).length}</Text> : null}
+          <Text color={
+            ctl.projectContextStatus().status === 'ready' ? UI.ok :
+            ctl.projectContextStatus().status === 'indexing' ? UI.warn :
+            CHROME.muted
+          }> · {t('memory.label')} {ctl.projectContextStatus().status}</Text>
+          <Text color={CHROME.muted}> · index {ctl.projectIndexStatus().files}</Text>
           {ctl.questions.length > 0 ? (
             <Text color={UI.warn}> · ❓{ctl.questions.length}</Text>
           ) : null}

@@ -34,8 +34,11 @@ export function cleanHubSummary(text: string): string {
 export function formatAgentTelemetry(agent: AgentInfo): string {
   const ctx = agent.ctxPct !== undefined ? ` · ${agent.ctxPct}% ctx` : '';
   const perf = agent.perf ? ` · ${agent.perf.modelTurns}t/${agent.perf.toolCalls} tools` : '';
+  const llm = agent.perf?.llmMs ? ` · llm ${Math.round(agent.perf.llmMs / 1000)}s` : '';
   const runtime = agent.endedAt ? `ended ${elapsed(agent.startedAt, agent.endedAt)}` : elapsed(agent.startedAt);
-  return `${runtime}${ctx}${perf} · ${agent.cost === null ? '$-' : fmtCost(agent.cost)}`;
+  const cache = agent.perf?.cachedTokens ? ` · cache ${Math.round(agent.perf.cachedTokens / 1000)}k` : '';
+  const profile = agent.profile ? ` · ${agent.profile}` : '';
+  return `${runtime}${profile}${ctx}${perf}${llm}${cache} · ${agent.cost === null ? '$-' : fmtCost(agent.cost)}`;
 }
 
 function firstSectionLine(text: string, labels: string[]): string | null {
@@ -231,6 +234,7 @@ export function AgentRow({
           <Text> </Text>
           <Text color={agent.color} bold>{name}</Text>
           <Text color={mode.color}> [{mode.label}]</Text>
+          {agent.profile ? <Text color={UI.muted}> [{agent.profile.toUpperCase()}]</Text> : null}
           {specialist ? <Text color={UI.note}>{specialist}</Text> : null}
           <Text color={UI.text}>  {truncate(agent.task, taskMax)}</Text>
         </Text>

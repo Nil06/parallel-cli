@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { t } from '../i18n.js';
 import { BRAND, COLOR } from './tokens.js';
@@ -6,6 +6,17 @@ import { BRAND, COLOR } from './tokens.js';
 function clampIndex(index: number, count: number): number {
   if (count <= 0) return 0;
   return Math.max(0, Math.min(index, count - 1));
+}
+
+export function selectableIndexes(items: SelectItem[]): number[] {
+  return items.map((it, i) => (it.section ? -1 : i)).filter((i) => i >= 0);
+}
+
+export function selectListWindow(itemsLength: number, selectedRealIndex: number, maxVisible: number): { start: number; end: number } {
+  const visible = Math.max(1, maxVisible);
+  if (itemsLength <= visible || selectedRealIndex < 0) return { start: 0, end: Math.min(itemsLength, visible) };
+  const start = Math.max(0, Math.min(selectedRealIndex - Math.floor(visible / 2), itemsLength - visible));
+  return { start, end: start + visible };
 }
 
 export interface SelectItem {
@@ -45,11 +56,32 @@ export function SelectList({
   const [idx, setIdx] = useState(0);
   const [typed, setTyped] = useState('');
   const typing = allowInput && typed.length > 0;
+  const selectable = useMemo(() => selectableIndexes(items), [items]);
+  const safeLogicalIdx = clampIndex(idx, selectable.length);
+  const safeRealIdx = selectable.length > 0 ? selectable[safeLogicalIdx] : -1;
+  const maxVisible = height ? Math.max(1, height - (allowInput ? 2 : 0)) : items.length;
+  const window = selectListWindow(items.length, safeRealIdx, maxVisible);
+  const visibleItems = items.slice(window.start, window.end);
+  const above = window.start;
+  const below = Math.max(0, items.length - window.end);
+  const pageStep = Math.max(1, Math.floor(Math.max(1, maxVisible) / 2));
+
+  useEffect(() => {
+    if (safeLogicalIdx !== idx) setIdx(safeLogicalIdx);
+  }, [idx, safeLogicalIdx]);
+
+  const chooseCurrent = () => {
+    const realIdx = selectable[safeLogicalIdx];
+    if (realIdx !== undefined && items[realIdx]) onSelect?.(items[realIdx].value);
+  };
 
   useInput((input, key) => {
-    // Build selectable index list each render (cheap — items is small).
-    const selectable = items.map((it, i) => (it.section ? -1 : i)).filter((i) => i >= 0);
     if (key.escape) {
+      if (typed) setTyped('');
+      else onBack?.();
+      return;
+    }
+    if (key.leftArrow) {
       if (typed) setTyped('');
       else onBack?.();
       return;
@@ -60,13 +92,17 @@ export function SelectList({
         setTyped('');
         if (v) onInput?.(v);
       } else {
-        const realIdx = selectable[idx];
-        if (realIdx !== undefined && items[realIdx]) onSelect?.(items[realIdx].value);
+        chooseCurrent();
       }
       return;
     }
+    if ((key.tab || key.rightArrow) && !typing) {
+      chooseCurrent();
+      return;
+    }
     if (key.backspace || key.delete) {
-      setTyped((v) => v.slice(0, -1));
+      if (typed) setTyped((v) => v.slice(0, -1));
+      else onBack?.();
       return;
     }
     if (key.upArrow) {
@@ -78,11 +114,11 @@ export function SelectList({
       return;
     }
     if (key.pageUp) {
-      if (!typing) setIdx((i) => Math.max(0, i - Math.max(1, Math.floor((height ?? 8) / 2))));
+      if (!typing) setIdx((i) => clampIndex(i - pageStep, selectable.length));
       return;
     }
     if (key.pageDown) {
-      if (!typing) setIdx((i) => Math.min(Math.max(0, selectable.length - 1), i + Math.max(1, Math.floor((height ?? 8) / 2))));
+      if (!typing) setIdx((i) => clampIndex(i + pageStep, selectable.length));
       return;
     }
     if ((key as any).home) {
@@ -105,22 +141,11 @@ export function SelectList({
     setTyped((v) => v + input);
   });
 
-  // Build a separate index map so up/down skip section headers.
-  const selectable = items.map((it, i) => (it.section ? -1 : i)).filter((i) => i >= 0);
-  const safeIdx = selectable.length > 0 ? selectable[Math.min(idx, selectable.length - 1)] : -1;
-  const maxVisible = height ? Math.max(1, height - (allowInput ? 2 : 0)) : items.length;
-  const start = items.length > maxVisible && safeIdx >= 0
-    ? Math.max(0, Math.min(safeIdx - Math.floor(maxVisible / 2), items.length - maxVisible))
-    : 0;
-  const visibleItems = items.slice(start, start + maxVisible);
-  const above = start;
-  const below = Math.max(0, items.length - start - visibleItems.length);
-
   return (
     <Box flexDirection="column">
       {above > 0 ? <Text color="gray">▲ {above}</Text> : null}
       {visibleItems.map((it, localIdx) => {
-        const i = start + localIdx;
+        const i = window.start + localIdx;
         return (
         it.section ? (
           <Box key={it.label} marginTop={i > 0 ? 1 : 0}>
@@ -130,8 +155,8 @@ export function SelectList({
           </Box>
         ) : (
           <Text key={it.value + i}>
-            <Text color={!typing && i === safeIdx ? COLOR.cream : 'gray'} bold={!typing && i === safeIdx}>
-              {!typing && i === safeIdx ? '❯ ' : '  '}
+            <Text color={!typing && i === safeRealIdx ? COLOR.cream : 'gray'} bold={!typing && i === safeRealIdx}>
+              {!typing && i === safeRealIdx ? '❯ ' : '  '}
               {it.label}
             </Text>
             {it.hint ? <Text color="gray"> {it.hint}</Text> : null}

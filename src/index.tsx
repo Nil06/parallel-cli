@@ -9,6 +9,7 @@ import { Controller } from './controller.js';
 import { loadConfig, providerReady, setConfigHome } from './config.js';
 import { setLang } from './i18n.js';
 import { maybeRunStartupUpdate } from './update.js';
+import type { ExecutionProfile } from './types.js';
 
 const argv = process.argv.slice(2);
 
@@ -31,6 +32,15 @@ if (jsonOut) argv.splice(argv.indexOf('--json'), 1);
 const noUpdate = argv.includes('--no-update');
 if (noUpdate) argv.splice(argv.indexOf('--no-update'), 1);
 const configHome = takeFlagValue('--config-home');
+let forcedProfile: ExecutionProfile | undefined;
+for (const candidate of ['quick', 'standard', 'deep'] as const) {
+  const flag = `--${candidate}`;
+  if (argv.includes(flag)) {
+    forcedProfile = candidate;
+    argv.splice(argv.indexOf(flag), 1);
+    break;
+  }
+}
 
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log(`⚡ Parallel — real-time parallel coding agents.
@@ -46,7 +56,7 @@ Usage:
                           Use <dir>/config.json instead of ~/.parallel/config.json
   parallel --no-update [folder]
                           Start without checking npm for a newer Parallel version
-  parallel --headless "task1" ["task2"…] [--json]
+  parallel --headless "task1" ["task2"…] [--quick|--standard|--deep] [--json]
                           No TUI: one agent per task in the current folder,
                           auto-safe shell, summary (or JSON) on stdout — for CI
   parallel --headless --yolo "task"
@@ -135,7 +145,7 @@ if (headless) {
     for (const q of [...ctl.questions]) ctl.answerQuestion(q.id, q.options[q.recommended] ?? '', true);
   });
   for (const task of tasks) {
-    if (!ctl.spawnAgent(task)) {
+    if (!ctl.spawnAgent(task, undefined, undefined, undefined, undefined, undefined, 'task', forcedProfile)) {
       console.error(`Failed to spawn an agent for: ${task}`);
       process.exit(1);
     }
@@ -166,6 +176,7 @@ if (headless) {
     alias: a.alias,
     task: a.task,
     state: a.state,
+    profile: a.profile,
     steps: a.steps,
     tokensIn: a.tokensIn,
     tokensOut: a.tokensOut,

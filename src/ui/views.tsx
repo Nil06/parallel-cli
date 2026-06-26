@@ -249,12 +249,14 @@ export function DiffView({ board, bodyHeight }: { board: Blackboard; bodyHeight?
 }
 
 /** Financial view: live cost / steps / tokens per agent + session total. */
-export function CostView({ board, bodyHeight }: { board: Blackboard; bodyHeight?: number }) {
+export function CostView({ ctl, bodyHeight }: { ctl: Controller; bodyHeight?: number }) {
+  const board = ctl.board;
   const agents = [...board.agents.values()];
   const fallbackVisible = useVisibleRows(8);
   const visible = bodyHeight ? Math.max(3, bodyHeight - 7) : fallbackVisible;
   const { slice, above, below } = useScrollWindow(agents, visible, 'top');
   const total = agents.reduce((s, a) => s + (a.cost ?? 0), 0);
+  const memory = ctl.projectContextStatus();
   const unknown = agents.some((a) => a.cost === null);
   return (
     <Box borderStyle="round" borderColor="greenBright" flexDirection="column" paddingX={1}>
@@ -273,6 +275,7 @@ export function CostView({ board, bodyHeight }: { board: Blackboard; bodyHeight?
                 {a.name.padEnd(12)}
               </Text>
               <Text color="gray">{a.model.padEnd(24).slice(0, 24)} </Text>
+              <Text color="gray">{(a.profile ?? 'standard').padEnd(8)} </Text>
               <Text>{String(a.steps).padStart(3)} steps </Text>
               <Text color={BRAND.primary}>
                 {String(Math.round(a.tokensIn / 1000)).padStart(5)}k in {String(Math.round(a.tokensOut / 1000)).padStart(4)}k out{' '}
@@ -292,6 +295,11 @@ export function CostView({ board, bodyHeight }: { board: Blackboard; bodyHeight?
           </Text>
         </>
       )}
+      <Text>
+        {'  '}{t('cost.memory')} <Text color={BRAND.primary}>{memory.model ?? '—'}</Text>{' '}
+        <Text color="greenBright">{memory.cost === null ? '$—' : fmtCost(memory.cost)}</Text>{' '}
+        <Text color="gray">({memory.status}, {memory.tokensIn + memory.tokensOut} tokens)</Text>
+      </Text>
       <Text color="gray">{t('cost.hint')}</Text>
     </Box>
   );
