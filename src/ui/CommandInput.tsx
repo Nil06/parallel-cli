@@ -8,7 +8,7 @@ import { BRAND, COLOR } from './tokens.js';
 
 export type InputContext = 'hub' | 'focus' | 'attach';
 
-type Attachment =
+export type Attachment =
   | { kind: 'paste'; n: number; marker: string; text: string; lines: number }
   | { kind: 'image'; n: number; dataUri: string; label: string };
 
@@ -36,6 +36,13 @@ const PASTE_MIN_LINES = 2;
 const AGENT_ARG_COMMANDS = new Set(['/focus', '/send', '/attach', '/pause', '/resume', '/stop', '/restore', '/commit']);
 const COMMAND_PAGE_SIZE = 9;
 const PROMPT_GUTTER = '› ';
+
+export function removeTrailingPasteAttachment(value: string, attachments: Attachment[]): { value: string; attachment?: Attachment } | null {
+  const paste = attachments.find((a): a is Extract<Attachment, { kind: 'paste' }> => a.kind === 'paste' && (value.endsWith(`${a.marker} `) || value.endsWith(a.marker)));
+  if (!paste) return null;
+  const suffix = value.endsWith(`${paste.marker} `) ? `${paste.marker} ` : paste.marker;
+  return { value: value.slice(0, -suffix.length), attachment: paste };
+}
 
 function modeHint(value: string, context: InputContext, targetAgent?: string): string {
   const v = value.trimStart().toLowerCase();
@@ -287,12 +294,10 @@ export function CommandInput({
       }
       if (key.backspace || key.delete) {
         // If the cursor sits right after a paste marker, remove the whole chip at once.
-        const at = attachments.find((a) => a.kind === 'paste' && value.endsWith(a.marker)) as
-          | Extract<Attachment, { kind: 'paste' }>
-          | undefined;
-        if (at) {
-          setValue((v) => v.slice(0, -at.marker.length));
-          setAttachments((arr) => arr.filter((a) => a !== at));
+        const removed = removeTrailingPasteAttachment(value, attachments);
+        if (removed) {
+          setValue(removed.value);
+          setAttachments((arr) => arr.filter((a) => a !== removed.attachment));
         } else {
           setValue((v) => v.slice(0, -1));
         }

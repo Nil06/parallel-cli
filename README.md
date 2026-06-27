@@ -26,6 +26,8 @@ Parallel lets several AI coding agents co-edit the same repository at the same t
 - Nudge agents immediately when another agent posts a targeted note, with dedupe and rate-limit safeguards.
 - See overlapping claims and repeated co-edit conflicts in the Hub, `/board`, `/diff`, and agent timelines.
 - Track shell-created file mutations in the same live diff feed as agent edits.
+- See compact green/red patch previews directly in focused and attached agent timelines when an agent writes or edits a file.
+- Follow task-specific activity narration that names the file, command, or coordination signal being handled instead of generic phase text.
 - Configure OpenAI-compatible providers through a guided wizard and settings panel.
 - Use 29 provider presets across Western, Chinese, Gateway, Inference, and Local categories.
 - Support local no-key endpoints such as Ollama and vLLM/SGLang.

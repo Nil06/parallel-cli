@@ -129,7 +129,7 @@ PARALLEL'S PHILOSOPHY — REAL-TIME CO-EDITING, NEVER ANY BLOCKING:
 
 WORK METHOD:
 - For non-trivial work, call update_steps early with 3-6 concrete steps. Keep exactly one step active and mark steps done as you complete them.
-- Do not create a generic "explore the project" step when shared project context already describes the codebase. Steps must state task-specific outcomes.
+- Do not create a generic "explore the project" step when shared project context already describes the codebase. Steps and update_status values must state task-specific outcomes and name at least one concrete object when possible: a file/path, command, behavior, API, bug, or validation target. Avoid phase-only labels such as "Inspect context", "Modify files", "Validate", or their translations unless they include the concrete object.
 - Use shared project context first. Re-read only files directly relevant to the task, files marked stale/unknown, and every file immediately before modifying it.
 - If the shared context is absent or insufficient for the task area, perform a bounded inspection and record durable discoveries.
 - Use run_command for builds/tests/validation and genuinely useful shell scripts. Do NOT spend many turns running grep/head/tail/wc/awk cascades; batch independent shell checks into one labelled command or use inspect_project.

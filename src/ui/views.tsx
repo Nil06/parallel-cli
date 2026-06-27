@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
-import * as Diff from 'diff';
 import { Blackboard } from '../coordination/blackboard.js';
 import { sortCommandsForPalette, visibleCommands } from '../commands.js';
 import { Controller } from '../controller.js';
@@ -9,6 +8,7 @@ import { STATE_LABEL, stateLabel, truncate } from './theme.js';
 import { t } from '../i18n.js';
 import type { Skill, Specialist } from '../types.js';
 import { BRAND, COLOR } from './tokens.js';
+import { DiffPatch } from './DiffPatch.js';
 
 function clampIndex(index: number, count: number): number {
   if (count <= 0) return 0;
@@ -216,10 +216,7 @@ export function DiffView({ board, bodyHeight }: { board: Blackboard; bodyHeight?
       ) : (
         <>
         <Above n={above} />
-        {changes.map((c) => {
-          const patch = Diff.createPatch(c.path, c.before, c.after, '', '', { context: 2 });
-          const lines = patch.split('\n').slice(4, 34);
-          return (
+        {changes.map((c) => (
             <Box key={c.id} flexDirection="column" marginTop={1}>
               <Text bold>
                 <Text color={BRAND.primary}>{c.path}</Text>
@@ -228,19 +225,9 @@ export function DiffView({ board, bodyHeight }: { board: Blackboard; bodyHeight?
                   {t('diff.by', { agent: c.agentName, time: new Date(c.ts).toLocaleTimeString() })}
                 </Text>
               </Text>
-              {lines.map((l, i) => (
-                <Text
-                  key={i}
-                  color={l.startsWith('+') ? 'green' : l.startsWith('-') ? 'red' : l.startsWith('@') ? BRAND.primary : 'gray'}
-                  wrap="truncate-end"
-                >
-                  {l || ' '}
-                </Text>
-              ))}
-              {patch.split('\n').length > 38 ? <Text color="gray">{t('diff.trunc')}</Text> : null}
+              <DiffPatch change={c} maxLines={30} context={2} />
             </Box>
-          );
-        })}
+        ))}
         <Below n={below} />
         </>
       )}

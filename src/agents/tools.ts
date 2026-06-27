@@ -743,11 +743,11 @@ export class ToolExecutor {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, content);
     const before = exists ? current : '';
-    this.board.addChange(this.agentId, relPath, before, content);
+    const change = this.board.addChange(this.agentId, relPath, before, content);
     this.rememberRead(relPath, content);
     this.board.resolveConflict(relPath);
     this.board.recordActivity(relPath, this.agentId, 'write');
-    this.board.log(this.agentId, 'tool', `✏ write ${relPath} (${content.length}B)`);
+    this.board.log(this.agentId, 'tool', `✏ write ${relPath} (${content.length}B)`, { changeId: change.id });
     return `File written: ${relPath} (${content.split('\n').length} lines). The other agents see your diff in real time.`;
   }
 
@@ -781,11 +781,11 @@ export class ToolExecutor {
     }
     const after = before.replace(oldStr, newStr);
     fs.writeFileSync(abs, after);
-    this.board.addChange(this.agentId, relPath, before, after);
+    const change = this.board.addChange(this.agentId, relPath, before, after);
     this.rememberRead(relPath, after);
     this.board.resolveConflict(relPath);
     this.board.recordActivity(relPath, this.agentId, 'edit');
-    this.board.log(this.agentId, 'tool', `✏ edit ${relPath}`);
+    this.board.log(this.agentId, 'tool', `✏ edit ${relPath}`, { changeId: change.id });
     return `File modified: ${relPath}. The other agents see your diff in real time.`;
   }
 

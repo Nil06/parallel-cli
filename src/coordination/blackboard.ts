@@ -261,8 +261,8 @@ export class Blackboard extends EventEmitter {
 
   // ---------- logs ----------
 
-  log(agentId: string, kind: LogKind, text: string): void {
-    this.logs.push({ agentId, kind, text: sanitizeTerminalText(text), ts: Date.now(), seq: ++this.logSeq });
+  log(agentId: string, kind: LogKind, text: string, meta: Pick<LogEntry, 'changeId'> = {}): void {
+    this.logs.push({ agentId, kind, text: sanitizeTerminalText(text), ts: Date.now(), seq: ++this.logSeq, ...meta });
     if (this.logs.length > 2000) this.logs.splice(0, this.logs.length - 2000);
     this.emit('update');
   }

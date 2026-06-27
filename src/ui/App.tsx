@@ -1001,7 +1001,7 @@ function MainScreen({
           <EmptyHub bodyHeight={bodyHeight} />
         ) : focused ? (
           <Box flexDirection="column">
-            <AgentTranscript agent={focused} logs={visibleLogs} raw={rawLogs} scrolled={clampedScroll} cols={cols} />
+            <AgentTranscript agent={focused} logs={visibleLogs} changes={ctl.board.changes} raw={rawLogs} scrolled={clampedScroll} cols={cols} />
             {!focusFollowTail ? <Text color={UI.warn}>Viewing older · PgDn to latest</Text> : null}
           </Box>
         ) : (

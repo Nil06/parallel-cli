@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Controller } from './controller.js';
-import type { AgentInfo, AgentMode, LogEntry } from './types.js';
+import type { AgentInfo, AgentMode, FileChange, LogEntry } from './types.js';
 import { ensurePrivateDir, writeFileAtomicPrivate } from './security.js';
 
 /**
@@ -23,7 +23,7 @@ import { ensurePrivateDir, writeFileAtomicPrivate } from './security.js';
  *   client → server  {type:'spawn', text, mode?}    launch agent N+1 from ANY terminal
  *   client → server  {type:'approve', id, approved, always}  answer an approval
  *   client → server  {type:'answer', id, text}      answer an agent question
- *   server → client  {type:'state', info, others, logs, approval?, question?}
+ *   server → client  {type:'state', info, others, logs, changes?, approval?, question?}
  *                    throttled ≈120ms; `logs` only contains lines newer than
  *                    what this client has already received (per-connection
  *                    lastSeq). `approval`/`question` are the agent's PENDING
@@ -36,6 +36,7 @@ interface AttachedClient {
   socket: net.Socket;
   agent: string; // name or alias, as given by the client
   lastSeq: number;
+  lastChangeId: number;
   authenticated: boolean;
 }
 
@@ -93,6 +94,11 @@ export function startSessionServer(ctl: Controller): (() => void) | null {
       if ((l.seq ?? 0) > c.lastSeq && (l.agentId === info.id || l.agentId === '')) fresh.push(l);
     }
     if (fresh.length > 0) c.lastSeq = fresh[fresh.length - 1].seq ?? c.lastSeq;
+    const changes: FileChange[] = [];
+    for (const change of ctl.board.changes) {
+      if (change.id > c.lastChangeId && change.agentId === info.id) changes.push(change);
+    }
+    if (changes.length > 0) c.lastChangeId = changes[changes.length - 1].id;
     // Shared awareness, made VISIBLE: every attached terminal also sees what
     // the other agents are doing right now (same data the agents receive).
     const others = [...ctl.board.agents.values()]
@@ -106,7 +112,7 @@ export function startSessionServer(ctl: Controller): (() => void) | null {
     const question = q
       ? { id: q.id, agentName: q.agentName, question: q.question, options: q.options, recommended: q.recommended }
       : undefined;
-    send(c.socket, { type: 'state', info, others, logs: fresh, approval, question });
+    send(c.socket, { type: 'state', info, others, logs: fresh, changes, approval, question });
   };
 
   // Throttled broadcast: at most one push per ~120ms, on blackboard updates.
@@ -122,7 +128,7 @@ export function startSessionServer(ctl: Controller): (() => void) | null {
   ctl.on('update', onUpdate);
 
   const server = net.createServer((socket) => {
-    const client: AttachedClient = { socket, agent: '', lastSeq: 0, authenticated: false };
+    const client: AttachedClient = { socket, agent: '', lastSeq: 0, lastChangeId: 0, authenticated: false };
     let buffer = '';
     socket.setEncoding('utf8');
     socket.on('data', (chunk: string) => {

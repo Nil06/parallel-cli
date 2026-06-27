@@ -17,6 +17,7 @@ import {
 } from './project-context.js';
 import { ProjectIndex, type ProjectIndexStatus } from './project-index.js';
 import { classifyExecutionProfile, EXECUTION_BUDGETS } from './agents/execution-policy.js';
+import { ringBell } from './bell.js';
 import type {
   AgentQuestion,
   ApprovalRequest,
@@ -300,9 +301,7 @@ ${changes || '- none'}`;
   }
 
   private bell(times: number): void {
-    for (let i = 0; i < times; i++) {
-      setTimeout(() => process.stdout.write(''), i * 250);
-    }
+    ringBell(times);
   }
 
   private nudgeFromNote(note: Note): void {

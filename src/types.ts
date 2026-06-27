@@ -117,6 +117,7 @@ export interface LogEntry {
   kind: LogKind;
   text: string;
   ts: number;
+  changeId?: number;
   /** Monotonic id — lets attached terminals stream only the lines they have not seen yet. */
   seq?: number;
 }

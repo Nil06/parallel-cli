@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import type { AgentInfo, LogEntry } from '../types.js';
+import type { AgentInfo, FileChange, LogEntry } from '../types.js';
 import { fmtCost } from '../pricing.js';
 import { elapsed, truncate } from './theme.js';
 import { Md } from './Md.js';
@@ -170,7 +170,7 @@ export function ProgressSteps({
   );
 }
 
-export function AgentRow({
+function AgentRowView({
   agent,
   logs,
   cols,
@@ -267,15 +267,46 @@ export function AgentRow({
   );
 }
 
+function sameAgentRowProps(prev: { agent: AgentInfo; logs: LogEntry[]; cols: number }, next: { agent: AgentInfo; logs: LogEntry[]; cols: number }): boolean {
+  const a = prev.agent;
+  const b = next.agent;
+  const prevLast = prev.logs[prev.logs.length - 1]?.seq ?? 0;
+  const nextLast = next.logs[next.logs.length - 1]?.seq ?? 0;
+  return (
+    prev.cols === next.cols &&
+    prevLast === nextLast &&
+    a.id === b.id &&
+    a.name === b.name &&
+    a.alias === b.alias &&
+    a.state === b.state &&
+    a.task === b.task &&
+    a.currentAction === b.currentAction &&
+    a.lastResult === b.lastResult &&
+    a.steps === b.steps &&
+    a.tokensIn === b.tokensIn &&
+    a.tokensOut === b.tokensOut &&
+    a.cost === b.cost &&
+    a.ctxPct === b.ctxPct &&
+    a.profile === b.profile &&
+    a.specialist === b.specialist &&
+    (a.claims ?? []).join('\0') === (b.claims ?? []).join('\0') &&
+    (a.progressSteps ?? []).map((s) => `${s.status}:${s.text}`).join('\0') === (b.progressSteps ?? []).map((s) => `${s.status}:${s.text}`).join('\0')
+  );
+}
+
+export const AgentRow = React.memo(AgentRowView, sameAgentRowProps);
+
 export function AgentTranscript({
   agent,
   logs,
+  changes,
   raw = false,
   scrolled = 0,
   cols = 100,
 }: {
   agent: AgentInfo;
   logs: LogEntry[];
+  changes?: FileChange[];
   raw?: boolean;
   scrolled?: number;
   cols?: number;
@@ -320,7 +351,7 @@ export function AgentTranscript({
         <Text color={UI.muted} bold>
           Activity{raw ? ' raw' : ''}
         </Text>
-        <Timeline logs={logs} raw={raw} cols={cols} />
+        <Timeline logs={logs} changes={changes} raw={raw} cols={cols} />
       </Box>
       <Text color={UI.muted} wrap="truncate-end">
         PgUp/PgDn scroll · /raw toggles detail · Esc returns

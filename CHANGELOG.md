@@ -2,6 +2,23 @@
 
 All notable changes to Parallel are documented here.
 
+## 0.5.1 - 2026-06-27
+
+### 0.5.1 Added
+
+- Added compact live diff previews to focused and attached agent timelines, reusing the same green/red patch rendering as `/diff`.
+
+### 0.5.1 Changed
+
+- Made timeline narration context-specific by naming the file, command, or coordination signal currently being handled instead of repeating generic phase text.
+- Tightened agent progress guidance so visible steps and current actions name concrete files, commands, behaviors, or validation targets.
+- Centralized audible notifications for the hub and attached terminals with a quieter best-effort fallback strategy.
+
+### 0.5.1 Fixed
+
+- Fixed backspace removal for collapsed paste chips that include the trailing space inserted after the marker.
+- Fixed attached terminal live activity missing the actual edited lines even though `/diff` already had the full patch.
+
 ## 0.5.0 - 2026-06-25
 
 ### 0.5.0 Added

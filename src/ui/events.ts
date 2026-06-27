@@ -1,4 +1,4 @@
-import type { AgentInfo, LogEntry } from '../types.js';
+import type { AgentInfo, FileChange, LogEntry } from '../types.js';
 import { oneLine } from './tokens.js';
 import { t } from '../i18n.js';
 
@@ -23,6 +23,7 @@ export interface UIEvent {
   label: string;
   detail: string;
   ts: number;
+  changeId?: number;
   seq?: number;
 }
 
@@ -38,6 +39,7 @@ export interface TimelineItem {
   output?: string[];
   hiddenLines?: number;
   files?: string[];
+  change?: FileChange;
   status?: 'ok' | 'error';
   ts: number;
   seq?: number;
@@ -46,6 +48,7 @@ export interface TimelineItem {
 export interface TimelineOptions {
   raw?: boolean;
   outputLines?: number;
+  changes?: FileChange[];
 }
 
 function cleanToolText(text: string): string {
@@ -65,20 +68,21 @@ function classify(log: LogEntry): UIEvent {
   const text = oneLine(log.text);
   const cleaned = cleanToolText(log.text);
   const lower = cleaned.toLowerCase();
-  if (log.kind === 'error') return { agentId: log.agentId, kind: 'error', label: 'error', detail: text, ts: log.ts, seq: log.seq };
+  const meta = { changeId: log.changeId, seq: log.seq };
+  if (log.kind === 'error') return { agentId: log.agentId, kind: 'error', label: 'error', detail: text, ts: log.ts, ...meta };
   if (log.kind === 'tool_result') {
-    return { agentId: log.agentId, kind: 'command_output', label: 'output', detail: log.text.trim(), ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'command_output', label: 'output', detail: log.text.trim(), ts: log.ts, ...meta };
   }
   if (log.kind === 'tool' && /^\s*📢/u.test(log.text)) {
-    return { agentId: log.agentId, kind: 'intent', label: 'next', detail: cleaned || text, ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'intent', label: 'next', detail: cleaned || text, ts: log.ts, ...meta };
   }
   if (log.kind === 'tool' && /^\s*☑/u.test(log.text)) {
-    return { agentId: log.agentId, kind: 'note', label: 'steps', detail: cleaned || text, ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'note', label: 'steps', detail: cleaned || text, ts: log.ts, ...meta };
   }
-  if (log.kind === 'note') return { agentId: log.agentId, kind: 'note', label: 'note', detail: cleaned || text, ts: log.ts, seq: log.seq };
-  if (log.kind === 'memory') return { agentId: log.agentId, kind: 'memory', label: 'memory', detail: cleaned || text, ts: log.ts, seq: log.seq };
-  if (log.kind === 'system') return { agentId: log.agentId, kind: 'system', label: 'system', detail: cleaned || text, ts: log.ts, seq: log.seq };
-  if (log.kind === 'llm') return { agentId: log.agentId, kind: 'thought', label: 'thinking', detail: cleaned.replace(/^✻\s*/, ''), ts: log.ts, seq: log.seq };
+  if (log.kind === 'note') return { agentId: log.agentId, kind: 'note', label: 'note', detail: cleaned || text, ts: log.ts, ...meta };
+  if (log.kind === 'memory') return { agentId: log.agentId, kind: 'memory', label: 'memory', detail: cleaned || text, ts: log.ts, ...meta };
+  if (log.kind === 'system') return { agentId: log.agentId, kind: 'system', label: 'system', detail: cleaned || text, ts: log.ts, ...meta };
+  if (log.kind === 'llm') return { agentId: log.agentId, kind: 'thought', label: 'thinking', detail: cleaned.replace(/^✻\s*/, ''), ts: log.ts, ...meta };
   if (/^\$\s*/.test(cleaned)) {
     return {
       agentId: log.agentId,
@@ -86,38 +90,38 @@ function classify(log: LogEntry): UIEvent {
       label: 'run',
       detail: stripShellNoise(cleaned.replace(/^\$\s*/, '')),
       ts: log.ts,
-      seq: log.seq,
+      ...meta,
     };
   }
   if (/^(read|opened)\s+/i.test(cleaned)) {
-    return { agentId: log.agentId, kind: 'file', label: 'read', detail: cleaned.replace(/^(read|opened)\s+/i, ''), ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'file', label: 'read', detail: cleaned.replace(/^(read|opened)\s+/i, ''), ts: log.ts, ...meta };
   }
   if (/^(ls|list)\s+/i.test(cleaned)) {
-    return { agentId: log.agentId, kind: 'file', label: 'list', detail: cleaned.replace(/^(ls|list)\s+/i, ''), ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'file', label: 'list', detail: cleaned.replace(/^(ls|list)\s+/i, ''), ts: log.ts, ...meta };
   }
   if (/^(search)\s+/i.test(cleaned)) {
-    return { agentId: log.agentId, kind: 'file', label: 'search', detail: cleaned.replace(/^search\s+/i, ''), ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'file', label: 'search', detail: cleaned.replace(/^search\s+/i, ''), ts: log.ts, ...meta };
   }
   if (/^inspect project/i.test(cleaned)) {
-    return { agentId: log.agentId, kind: 'file', label: 'search', detail: 'project', ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'file', label: 'search', detail: 'project', ts: log.ts, ...meta };
   }
   if (/^(claim|claims?):?\s+/i.test(cleaned)) {
-    return { agentId: log.agentId, kind: 'note', label: 'claim', detail: cleaned.replace(/^(claim|claims?):?\s*/i, ''), ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'note', label: 'claim', detail: cleaned.replace(/^(claim|claims?):?\s*/i, ''), ts: log.ts, ...meta };
   }
   if (/^(write|edit|patch)\s+/i.test(cleaned)) {
     const label = lower.startsWith('write') ? 'write' : 'edit';
-    return { agentId: log.agentId, kind: 'file', label, detail: cleaned.replace(/^(write|edit|patch|claim|claims?)\s*/i, ''), ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'file', label, detail: cleaned.replace(/^(write|edit|patch|claim|claims?)\s*/i, ''), ts: log.ts, ...meta };
   }
   if (/^(run|exec|shell|npm|pnpm|yarn|git|node|npx)\b/i.test(cleaned)) {
-    return { agentId: log.agentId, kind: 'command', label: 'run', detail: stripShellNoise(cleaned), ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'command', label: 'run', detail: stripShellNoise(cleaned), ts: log.ts, ...meta };
   }
   if (lower.includes('approval') || lower.includes('approve')) {
-    return { agentId: log.agentId, kind: 'approval', label: 'approval', detail: cleaned || text, ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'approval', label: 'approval', detail: cleaned || text, ts: log.ts, ...meta };
   }
   if (lower.includes('ask') || lower.includes('question')) {
-    return { agentId: log.agentId, kind: 'question', label: 'question', detail: cleaned || text, ts: log.ts, seq: log.seq };
+    return { agentId: log.agentId, kind: 'question', label: 'question', detail: cleaned || text, ts: log.ts, ...meta };
   }
-  return { agentId: log.agentId, kind: log.kind === 'tool' ? 'tool' : 'system', label: log.kind === 'tool' ? 'tool' : 'info', detail: cleaned || text, ts: log.ts, seq: log.seq };
+  return { agentId: log.agentId, kind: log.kind === 'tool' ? 'tool' : 'system', label: log.kind === 'tool' ? 'tool' : 'info', detail: cleaned || text, ts: log.ts, ...meta };
 }
 
 export function toUIEvents(logs: LogEntry[]): UIEvent[] {
@@ -205,16 +209,35 @@ function narrationFor(category: TimelineCategory, previous?: TimelineCategory): 
   return t(`timeline.narration.${category}`);
 }
 
-function pushSection(out: TimelineItem[], category: TimelineCategory, ts: number, seq?: number): void {
+function eventNarration(e: UIEvent, category: TimelineCategory, previous?: TimelineCategory): string {
+  const target = e.kind === 'command' ? e.detail : e.detail || e.label;
+  if (category === 'inspect' && target) return t('timeline.narration.inspectTarget', { target });
+  if (category === 'change' && target) return t('timeline.narration.changeTarget', { target });
+  if (category === 'validate' && target) return t('timeline.narration.validateCommand', { command: target });
+  if (category === 'publish' && target) return t('timeline.narration.publishCommand', { command: target });
+  if (category === 'coordinate' && target) return t('timeline.narration.coordinateTarget', { target });
+  if (category === 'result' && target) return t('timeline.narration.resultTarget', { target });
+  return narrationFor(category, previous);
+}
+
+function pushSection(out: TimelineItem[], category: TimelineCategory, e: UIEvent): void {
   const prev = [...out].reverse().find((i) => i.kind !== 'section');
   if (category === 'other') return;
   if (!prev) {
-    out.push({ kind: 'narration', category, label: 'narration', detail: narrationFor(category), ts, seq });
+    out.push({ kind: 'narration', category, label: 'narration', detail: eventNarration(e, category), ts: e.ts, seq: e.seq });
     return;
   }
   if (prev.category === category) return;
-  out.push({ kind: 'section', category, label: category, ts, seq });
-  out.push({ kind: 'narration', category, label: 'narration', detail: narrationFor(category, prev.category), ts, seq });
+  out.push({ kind: 'section', category, label: category, ts: e.ts, seq: e.seq });
+  out.push({ kind: 'narration', category, label: 'narration', detail: eventNarration(e, category, prev.category), ts: e.ts, seq: e.seq });
+}
+
+function changeFor(e: UIEvent, changes: FileChange[] = []): FileChange | undefined {
+  const logChangeId = (e as UIEvent & { changeId?: number }).changeId;
+  if (logChangeId !== undefined) return changes.find((c) => c.id === logChangeId);
+  if (e.kind !== 'file' || (e.label !== 'write' && e.label !== 'edit')) return undefined;
+  const firstPath = e.detail.split(/[\s,(]+/).find(Boolean);
+  return [...changes].reverse().find((c) => c.agentId === e.agentId && c.path === firstPath);
 }
 
 export function presentTimeline(logs: LogEntry[], options: TimelineOptions = {}): TimelineItem[] {
@@ -223,7 +246,7 @@ export function presentTimeline(logs: LogEntry[], options: TimelineOptions = {})
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
     const category = categoryFor(e);
-    pushSection(out, category, e.ts, e.seq);
+    pushSection(out, category, e);
     if (options.raw && e.kind === 'thought') {
       out.push({ kind: 'thought', category, label: e.label, detail: e.detail, ts: e.ts, seq: e.seq });
       continue;
@@ -234,7 +257,8 @@ export function presentTimeline(logs: LogEntry[], options: TimelineOptions = {})
         group.push(events[++i]);
       }
       const files = filesFrom(group);
-      out.push({ kind: 'files', category, label: e.label, files, ts: group[group.length - 1].ts, seq: group[group.length - 1].seq });
+      const change = group.length === 1 ? changeFor(e, options.changes) : undefined;
+      out.push({ kind: 'files', category, label: e.label, files, change, ts: group[group.length - 1].ts, seq: group[group.length - 1].seq });
       continue;
     }
     if (e.kind === 'command') {

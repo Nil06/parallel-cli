@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import net from 'node:net';
 import { Box, Static, Text, useApp, useInput, useStdout } from 'ink';
-import type { AgentInfo, AgentMode, AgentQuestion, ApprovalRequest, LogEntry } from '../types.js';
+import type { AgentInfo, AgentMode, AgentQuestion, ApprovalRequest, FileChange, LogEntry } from '../types.js';
 import { ApprovalPrompt } from './ApprovalPrompt.js';
 import { CommandInput } from './CommandInput.js';
 import { formatAgentTelemetry, KIND_COLOR, KIND_DIM, modeBadge, ProgressSteps } from './AgentPanel.js';
@@ -13,6 +13,7 @@ import { stateLabel, elapsed, truncate } from './theme.js';
 import { fmtCost } from '../pricing.js';
 import { t } from '../i18n.js';
 import { COLOR, STATE_META, UI, middleTruncate } from './tokens.js';
+import { ringBell } from '../bell.js';
 
 /**
  * `parallel attach <agent>` — one DEDICATED terminal per agent.
@@ -193,6 +194,7 @@ export function AttachApp({ agentRef, sock, token }: { agentRef: string; sock: s
   const [launchCards, setLaunchCards] = useState<LaunchCard[]>([]);
   const [resultCards, setResultCards] = useState<ResultCard[]>([]);
   const [lines, setLines] = useState<StaticLine[]>([]);
+  const [changes, setChanges] = useState<FileChange[]>([]);
   const [timelineScroll, setTimelineScroll] = useState(0);
   const [timelineFollowTail, setTimelineFollowTail] = useState(true);
   const [approval, setApproval] = useState<WireApproval | null>(null);
@@ -234,6 +236,9 @@ export function AttachApp({ agentRef, sock, token }: { agentRef: string; sock: s
           if (Array.isArray(msg.logs) && msg.logs.length > 0) {
             setLines((prev) => [...prev, ...msg.logs.map((l: LogEntry) => ({ key: ++keySeq.current, log: l }))]);
           }
+          if (Array.isArray(msg.changes) && msg.changes.length > 0) {
+            setChanges((prev) => [...prev, ...msg.changes].slice(-80));
+          }
         } else if (msg.type === 'bye') {
           setGone(true);
         }
@@ -267,8 +272,7 @@ export function AttachApp({ agentRef, sock, token }: { agentRef: string; sock: s
     const id = approval ? `a${approval.id}` : question ? `q${question.id}` : '';
     if (id && id !== lastBellId.current) {
       lastBellId.current = id;
-      process.stdout.write('\x07');
-      setTimeout(() => process.stdout.write('\x07'), 300);
+      ringBell(2);
     }
     if (!id) lastBellId.current = '';
   }, [approval?.id, question?.id]);
@@ -405,7 +409,7 @@ export function AttachApp({ agentRef, sock, token }: { agentRef: string; sock: s
           {busy && timelineFollowTail && liveTimelineLogs.length > 0 ? (
             <Box flexDirection="column" marginTop={1}>
               <Text color={UI.muted} bold>Live activity</Text>
-              <Timeline logs={liveTimelineLogs} cols={process.stdout.columns || 100} />
+              <Timeline logs={liveTimelineLogs} changes={changes} cols={process.stdout.columns || 100} />
             </Box>
           ) : null}
           {terminal && info.lastResult ? (
@@ -422,7 +426,7 @@ export function AttachApp({ agentRef, sock, token }: { agentRef: string; sock: s
           {!timelineFollowTail ? (
             <Box flexDirection="column" marginTop={1}>
               <Text color={UI.warn}>Viewing older activity · ↓/PgDn to latest</Text>
-              <Timeline logs={timelineWindow} cols={process.stdout.columns || 100} />
+              <Timeline logs={timelineWindow} changes={changes} cols={process.stdout.columns || 100} />
             </Box>
           ) : null}
         </Box>

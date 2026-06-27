@@ -1,10 +1,11 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { t } from '../i18n.js';
-import type { LogEntry } from '../types.js';
+import type { FileChange, LogEntry } from '../types.js';
 import { presentTimeline, type TimelineItem } from './events.js';
 import { truncate } from './theme.js';
 import { UI } from './tokens.js';
+import { DiffPatch } from './DiffPatch.js';
 
 function sectionLabel(category: TimelineItem['category']): string {
   return t(`timeline.section.${category}`);
@@ -98,11 +99,18 @@ function TimelineRow({ item, cols }: { item: TimelineItem; cols: number }) {
     const shown = files.slice(0, 5).join(', ');
     const extra = files.length > 5 ? ` +${files.length - 5}` : '';
     return (
-      <Text color={itemColor(item)} wrap="truncate-end">
-        <Text color={UI.muted}>• </Text>
-        <Text bold>{fileLabel(item.label, files.length)} </Text>
-        <Text color={UI.muted}>{shown}{extra}</Text>
-      </Text>
+      <Box flexDirection="column">
+        <Text color={itemColor(item)} wrap="truncate-end">
+          <Text color={UI.muted}>• </Text>
+          <Text bold>{fileLabel(item.label, files.length)} </Text>
+          <Text color={UI.muted}>{shown}{extra}</Text>
+        </Text>
+        {item.change ? (
+          <Box marginLeft={2} flexDirection="column">
+            <DiffPatch change={item.change} maxLines={10} context={1} cols={cols - 2} />
+          </Box>
+        ) : null}
+      </Box>
     );
   }
   if (item.output) {
@@ -124,8 +132,8 @@ function TimelineRow({ item, cols }: { item: TimelineItem; cols: number }) {
   );
 }
 
-export function Timeline({ logs, raw = false, emptyText, cols = 100 }: { logs: LogEntry[]; raw?: boolean; emptyText?: string; cols?: number }) {
-  const items = presentTimeline(logs, { raw, outputLines: raw ? 10 : 6 });
+export function Timeline({ logs, changes, raw = false, emptyText, cols = 100 }: { logs: LogEntry[]; changes?: FileChange[]; raw?: boolean; emptyText?: string; cols?: number }) {
+  const items = presentTimeline(logs, { raw, outputLines: raw ? 10 : 6, changes });
   if (items.length === 0) return <Text color={UI.muted}>{emptyText ?? t('timeline.empty')}</Text>;
   return (
     <Box flexDirection="column">
