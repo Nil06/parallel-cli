@@ -27,6 +27,7 @@ Parallel lets several AI coding agents co-edit the same repository at the same t
 - See overlapping claims and repeated co-edit conflicts in the Hub, `/board`, `/diff`, and agent timelines.
 - Track shell-created file mutations in the same live diff feed as agent edits.
 - See compact green/red patch previews directly in focused and attached agent timelines when an agent writes or edits a file.
+- Read long Hub task/result summaries without losing the end of the sentence; rows wrap and the Hub scrolls through large multi-agent sessions.
 - Follow task-specific activity narration that names the file, command, or coordination signal being handled instead of generic phase text.
 - Configure OpenAI-compatible providers through a guided wizard and settings panel.
 - Use 29 provider presets across Western, Chinese, Gateway, Inference, and Local categories.
@@ -159,7 +160,7 @@ Plain text is equivalent to `/task`.
 
 ## Control Room
 
-The main TUI is the Parallel hub. The default view stays intentionally quiet: a Codex-like framed header, cream-toned accents, a focused prompt block, compact cropped agent rows, and detailed status moved into explicit views.
+The main TUI is the Parallel hub. The default view stays intentionally quiet: a Codex-like framed header, cream-toned accents, a focused prompt block, wrapped agent rows, and detailed status moved into explicit views.
 
 It is designed to answer:
 
@@ -169,7 +170,9 @@ It is designed to answer:
 - what changed in the project
 - what model, provider, shell mode, and cost are active
 
-Agent rows stay compact even when summaries are long. Use the row shortcuts to expand the right level of detail:
+Agent rows keep the useful fields visible without cutting sentences short. Task, result, validation, file, risk, and change summaries wrap in place; runtime, context, tool, cache, and cost telemetry sits in a muted strip after `Changes`. When many agents or long summaries fill the screen, PgUp/PgDn scrolls through the Hub.
+
+Use the row shortcuts to expand the right level of detail:
 
 - `full /focus a1`: open the full in-Hub transcript and result for one agent.
 - `term /attach a1`: reopen that agent's dedicated terminal.
@@ -195,7 +198,7 @@ Common hub commands:
 - `/attach a1`: open or reopen an agent's dedicated terminal.
 - `/review all`: ask-mode reviewer with verdict, risks, tests, and files to inspect.
 - `/board`: shared blackboard, claims, notes, and file activity.
-- `/diff`: live diff history.
+- `/diff`: live diff history with detailed patches for real file changes.
 - `/cost`: token and cost breakdown.
 - `/sessions`: saved sessions.
 - `/settings`: global settings.

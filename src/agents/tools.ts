@@ -449,11 +449,15 @@ export class ToolExecutor {
       const oldContent = before.get(relPath);
       const newContent = after.get(relPath);
       if (oldContent === newContent) continue;
-      this.board.addChange(this.agentId, relPath, oldContent ?? '', newContent ?? '');
+      const change = this.board.addChange(this.agentId, relPath, oldContent ?? '', newContent ?? '');
       this.board.recordActivity(relPath, this.agentId, 'shell');
+      if (count < 5) {
+        const op = oldContent === undefined ? 'write' : 'edit';
+        this.board.log(this.agentId, 'tool', `✏ ${op} ${relPath} via shell`, { changeId: change.id });
+      }
       count++;
     }
-    if (count > 0) this.board.log(this.agentId, 'tool', `✏ shell changed ${count} file${count === 1 ? '' : 's'}`);
+    if (count > 0) this.board.log(this.agentId, 'tool', `✏ shell changed ${count} file${count === 1 ? '' : 's'}${count > 5 ? ' (first 5 patches shown live; use /diff for all)' : ''}`);
     return count;
   }
 

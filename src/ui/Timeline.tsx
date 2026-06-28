@@ -77,8 +77,10 @@ function TimelineRow({ item, cols }: { item: TimelineItem; cols: number }) {
       <Box flexDirection="column" marginTop={1}>
         <Text color={item.status === 'error' ? UI.danger : UI.text} wrap="truncate-end">
           <Text color={UI.muted}>• </Text>
-          <Text bold>{t('timeline.ran')} </Text>
-          <Text color={UI.accent}>{truncate(item.command ?? '', max)}</Text>
+          <Text bold color={item.status === 'error' ? UI.danger : UI.text}>{t('timeline.ran')} </Text>
+          <Text color={UI.accent} backgroundColor="#302833">
+            {' '}{truncate(item.command ?? '', max - 2)}{' '}
+          </Text>
         </Text>
         <OutputLines item={item} cols={cols} />
       </Box>
@@ -105,10 +107,16 @@ function TimelineRow({ item, cols }: { item: TimelineItem; cols: number }) {
           <Text bold>{fileLabel(item.label, files.length)} </Text>
           <Text color={UI.muted}>{shown}{extra}</Text>
         </Text>
-        {item.change ? (
-          <Box marginLeft={2} flexDirection="column">
-            <DiffPatch change={item.change} maxLines={10} context={1} cols={cols - 2} />
+        {(item.changes && item.changes.length > 0 ? item.changes : item.change ? [item.change] : []).slice(0, 3).map((change) => (
+          <Box key={change.id} marginLeft={2} flexDirection="column" marginTop={1}>
+            <Text color={UI.text} bold wrap="truncate-end">
+              {truncate(change.path, max)}
+            </Text>
+            <DiffPatch change={change} maxLines={10} context={1} cols={cols - 2} />
           </Box>
+        ))}
+        {item.changes && item.changes.length > 3 ? (
+          <Text color={UI.muted}>  {t('timeline.hiddenPatches', { count: item.changes.length - 3 })}</Text>
         ) : null}
       </Box>
     );

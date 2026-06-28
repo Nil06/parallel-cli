@@ -262,9 +262,19 @@ export class Blackboard extends EventEmitter {
   // ---------- logs ----------
 
   log(agentId: string, kind: LogKind, text: string, meta: Pick<LogEntry, 'changeId'> = {}): void {
-    this.logs.push({ agentId, kind, text: sanitizeTerminalText(text), ts: Date.now(), seq: ++this.logSeq, ...meta });
+    const entry = { agentId, kind, text: sanitizeTerminalText(text), ts: Date.now(), seq: ++this.logSeq, ...meta };
+    this.logs.push(entry);
     if (this.logs.length > 2000) this.logs.splice(0, this.logs.length - 2000);
+    this.emit('log', entry);
     this.emit('update');
+  }
+
+  setLogNarration(seq: number, narration: string): void {
+    const entry = this.logs.find((log) => log.seq === seq);
+    if (!entry || entry.narration === narration) return;
+    entry.narration = sanitizeTerminalText(narration).replace(/\s+/g, ' ').trim().slice(0, 220);
+    this.emit('update');
+    this.schedulePersist();
   }
 
   logsFor(agentId: string, count: number): LogEntry[] {

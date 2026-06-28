@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import { exec, execFileSync, spawn } from 'node:child_process';
+import * as Diff from 'diff';
 import { Blackboard } from './coordination/blackboard.js';
 import { LLMClient } from './llm/client.js';
 import { Agent } from './agents/agent.js';
@@ -18,6 +19,8 @@ import {
 import { ProjectIndex, type ProjectIndexStatus } from './project-index.js';
 import { classifyExecutionProfile, EXECUTION_BUDGETS } from './agents/execution-policy.js';
 import { ringBell } from './bell.js';
+import { getLang, LANG_NAME_EN } from './i18n.js';
+import { toUIEvents } from './ui/events.js';
 import type {
   AgentQuestion,
   ApprovalRequest,
@@ -105,6 +108,7 @@ export class Controller extends EventEmitter {
   /** Conversation JSONL path per agent id — what makes /restore possible. */
   private conversationFiles = new Map<string, string>();
   private noteNudgeLast = new Map<string, number>();
+  private narrationRequests = new Set<string>();
   /** The session restored at startup (source of /restore conversations). */
   loadedSession: SessionData | null = null;
   private sessionOnlyProvider: ProviderConfig | null = null;
@@ -139,6 +143,7 @@ export class Controller extends EventEmitter {
       soundEnabled: config.soundEnabled,
     };
     this.board.on('update', () => this.emit('update'));
+    this.board.on('log', (entry: any) => this.scheduleNarration(entry));
     this.board.on('agent-event', (ev: any) => this.onAgentEvent(ev));
     this.board.on('note', (note: Note) => this.nudgeFromNote(note));
     this.hardenPrivateState();
@@ -228,6 +233,79 @@ export class Controller extends EventEmitter {
 
   projectIndexStatus(): ProjectIndexStatus {
     return this.projectIndex.status();
+  }
+
+  private scheduleNarration(entry: { agentId?: string; kind?: string; text?: string; seq?: number; changeId?: number }): void {
+    if (!entry.agentId || !entry.seq || entry.kind === 'llm' || entry.kind === 'tool_result' || entry.kind === 'memory') return;
+    const event = toUIEvents([entry as any])[0];
+    if (!event) return;
+    const significant =
+      event.kind === 'file' ||
+      event.kind === 'command' ||
+      event.kind === 'note' ||
+      event.kind === 'approval' ||
+      event.kind === 'question' ||
+      event.kind === 'error';
+    if (!significant) return;
+    const key = `${entry.agentId}:${entry.seq}:${entry.changeId ?? ''}`;
+    if (this.narrationRequests.has(key)) return;
+    this.narrationRequests.add(key);
+    void this.generateNarration(key, entry as any);
+  }
+
+  private async generateNarration(key: string, entry: { agentId: string; text: string; seq: number; changeId?: number }): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const provider = this.sessionProvider();
+      const model = this.session.model || provider?.defaultModel || provider?.models[0] || '';
+      const agent = this.board.agents.get(entry.agentId);
+      if (!provider || !model || !providerReady(provider) || !agent) return;
+      const event = toUIEvents([entry as any])[0];
+      if (!event) return;
+      const change = entry.changeId ? this.board.changes.find((c) => c.id === entry.changeId) : undefined;
+      const patch = change
+        ? Diff.createPatch(change.path, change.before, change.after, '', '', { context: 1 }).split('\n').slice(4, 22).join('\n')
+        : '';
+      const controller = new AbortController();
+      timer = setTimeout(() => controller.abort(), 2_000);
+      const llm = this.llmFor(provider, model);
+      const context = [
+        this.projectContext.snapshot().slice(0, 4_000),
+        this.projectIndex.retrieve(agent.task, 5).slice(0, 2_000),
+      ].join('\n\n');
+      const result = await llm.chat(
+        [
+          {
+            role: 'system',
+            content:
+              'You write one short UI narration sentence for a human watching a coding agent work. Explain the intent or consequence of the current action in project terms, not just the mechanical action. Be concrete, grounded, and helpful. Do not use markdown. Do not invent facts. Keep it under 30 words.',
+          },
+          {
+            role: 'user',
+            content:
+              `Language: ${LANG_NAME_EN[getLang()]}\n` +
+              `Project context:\n${context}\n\n` +
+              `User task for this agent:\n${agent.task}\n\n` +
+              `Agent state: ${agent.state}\n` +
+              `Timeline event: ${event.kind} / ${event.label} / ${event.detail}\n` +
+              `Current action: ${agent.currentAction || '(none)'}\n` +
+              `Changed file: ${change?.path ?? '(none)'}\n` +
+              `Patch excerpt:\n${patch || '(none)'}\n\n` +
+              'Return exactly one sentence for the UI narration.',
+          },
+        ],
+        undefined,
+        controller.signal,
+        { maxTokens: 120, timeoutMs: 2_500 },
+      );
+      const text = (result.message.content ?? '').replace(/\s+/g, ' ').trim();
+      if (text) this.board.setLogNarration(entry.seq, text);
+    } catch {
+      // Static i18n narration remains visible when the flash request fails.
+    } finally {
+      if (timer) clearTimeout(timer);
+      this.narrationRequests.delete(key);
+    }
   }
 
   private async projectContextBootstrap(task = ''): Promise<string> {

@@ -18,7 +18,7 @@ import {
 } from '../config.js';
 import { LANGS, setLang, t } from '../i18n.js';
 import type { Lang, ParallelConfig, ProviderConfig, SessionData } from '../types.js';
-import { AgentRow, AgentTranscript } from './AgentPanel.js';
+import { AgentRow, AgentTranscript, estimateAgentRowLines } from './AgentPanel.js';
 import { ApprovalPrompt } from './ApprovalPrompt.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
 import { CommandInput } from './CommandInput.js';
@@ -849,7 +849,7 @@ function MainScreen({
   const [hubScroll, setHubScroll] = useState(0);
   const [hubFollowTail, setHubFollowTail] = useState(true);
   const hubRows = Math.max(3, bodyHeight - 2);
-  const maxHubScroll = Math.max(0, agents.length - Math.max(1, Math.floor(hubRows / 2)));
+  const maxHubScroll = Math.max(0, agents.length - 1);
   const clampedHub = Math.min(hubScroll, maxHubScroll);
   const logSeq = ctl.board.logs.length > 0 ? ctl.board.logs[ctl.board.logs.length - 1].seq ?? ctl.board.logs.length : 0;
   useEffect(() => {
@@ -1146,13 +1146,10 @@ function AgentHub({
         continue;
       }
       const needsSeparator = rows.length > 0;
-      const summaryLines = agent.lastResult ? Math.min(4, Math.max(1, agent.lastResult.split('\n').filter((l) => l.trim()).length)) : 0;
-      const stepLines = !agent.lastResult && agent.progressSteps && agent.progressSteps.length > 0
-        ? Math.min(3, agent.progressSteps.length) + (agent.progressSteps.length > 3 ? 1 : 0)
-        : 0;
-      const agentLines = 1 + Math.max(summaryLines, agent.currentAction || agent.claims?.length ? 1 : 0) + stepLines;
+      const logs = ctl.board.logsFor(agent.id, 8);
+      const agentLines = estimateAgentRowLines(agent, logs, ctl.board.changes, cols);
       const neededLines = agentLines + (needsSeparator ? 1 : 0);
-      if (renderedLines + neededLines > visibleRows) {
+      if (renderedLines > 0 && renderedLines + neededLines > visibleRows) {
         full = true;
         break;
       }
@@ -1165,7 +1162,7 @@ function AgentHub({
       renderedAgents++;
       renderedLines += agentLines;
       rows.push(
-        <AgentRow key={agent.id} agent={agent} logs={ctl.board.logsFor(agent.id, 8)} cols={cols} />,
+        <AgentRow key={agent.id} agent={agent} logs={logs} changes={ctl.board.changes} cols={cols} />,
       );
     }
     if (full) break;

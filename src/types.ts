@@ -118,6 +118,8 @@ export interface LogEntry {
   text: string;
   ts: number;
   changeId?: number;
+  /** Optional model-generated UI narration for this event; static i18n is the offline fallback. */
+  narration?: string;
   /** Monotonic id — lets attached terminals stream only the lines they have not seen yet. */
   seq?: number;
 }

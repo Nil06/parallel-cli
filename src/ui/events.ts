@@ -24,6 +24,7 @@ export interface UIEvent {
   detail: string;
   ts: number;
   changeId?: number;
+  narration?: string;
   seq?: number;
 }
 
@@ -40,6 +41,7 @@ export interface TimelineItem {
   hiddenLines?: number;
   files?: string[];
   change?: FileChange;
+  changes?: FileChange[];
   status?: 'ok' | 'error';
   ts: number;
   seq?: number;
@@ -68,7 +70,7 @@ function classify(log: LogEntry): UIEvent {
   const text = oneLine(log.text);
   const cleaned = cleanToolText(log.text);
   const lower = cleaned.toLowerCase();
-  const meta = { changeId: log.changeId, seq: log.seq };
+  const meta = { changeId: log.changeId, narration: log.narration, seq: log.seq };
   if (log.kind === 'error') return { agentId: log.agentId, kind: 'error', label: 'error', detail: text, ts: log.ts, ...meta };
   if (log.kind === 'tool_result') {
     return { agentId: log.agentId, kind: 'command_output', label: 'output', detail: log.text.trim(), ts: log.ts, ...meta };
@@ -210,6 +212,7 @@ function narrationFor(category: TimelineCategory, previous?: TimelineCategory): 
 }
 
 function eventNarration(e: UIEvent, category: TimelineCategory, previous?: TimelineCategory): string {
+  if (e.narration) return e.narration;
   const target = e.kind === 'command' ? e.detail : e.detail || e.label;
   if (category === 'inspect' && target) return t('timeline.narration.inspectTarget', { target });
   if (category === 'change' && target) return t('timeline.narration.changeTarget', { target });
@@ -257,8 +260,20 @@ export function presentTimeline(logs: LogEntry[], options: TimelineOptions = {})
         group.push(events[++i]);
       }
       const files = filesFrom(group);
-      const change = group.length === 1 ? changeFor(e, options.changes) : undefined;
-      out.push({ kind: 'files', category, label: e.label, files, change, ts: group[group.length - 1].ts, seq: group[group.length - 1].seq });
+      const itemChanges = group.flatMap((event) => {
+        const change = changeFor(event, options.changes);
+        return change ? [change] : [];
+      });
+      out.push({
+        kind: 'files',
+        category,
+        label: e.label,
+        files,
+        change: itemChanges[0],
+        changes: itemChanges,
+        ts: group[group.length - 1].ts,
+        seq: group[group.length - 1].seq,
+      });
       continue;
     }
     if (e.kind === 'command') {

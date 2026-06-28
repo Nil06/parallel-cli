@@ -14,6 +14,8 @@ import { fmtCost } from '../pricing.js';
 import { t } from '../i18n.js';
 import { COLOR, STATE_META, UI, middleTruncate } from './tokens.js';
 import { ringBell } from '../bell.js';
+import { changesForAgent, formatChangeStats, summarizeChanges } from './changeSummary.js';
+import { DiffPatch } from './DiffPatch.js';
 
 /**
  * `parallel attach <agent>` — one DEDICATED terminal per agent.
@@ -42,6 +44,32 @@ interface ResultCard {
   key: number;
   info: AgentInfo;
   result: string;
+  changes: FileChange[];
+}
+
+function AttachedChanges({ info, changes }: { info: AgentInfo; changes: FileChange[] }) {
+  const ownChanges = changesForAgent(changes, info.id);
+  const stats = summarizeChanges(ownChanges);
+  const latest = ownChanges.slice(-2);
+  return (
+    <Box borderStyle="single" borderColor={stats.files > 0 ? UI.ok : UI.warn} flexDirection="column" paddingX={1} marginTop={1}>
+      <Text color={stats.files > 0 ? UI.ok : UI.warn} bold>{t('agent.realChanges')}</Text>
+      <Text color={stats.files > 0 ? UI.ok : UI.warn}>{formatChangeStats(stats)}</Text>
+      {latest.map((change) => (
+        <Box key={change.id} flexDirection="column" marginTop={1}>
+          <Text color={COLOR.cream} bold wrap="truncate-end">{change.path}</Text>
+          <DiffPatch change={change} maxLines={12} context={1} cols={process.stdout.columns || 100} />
+        </Box>
+      ))}
+      {ownChanges.length > latest.length ? <Text color={UI.muted}>{t('agent.moreChanges', { count: ownChanges.length - latest.length })}</Text> : null}
+    </Box>
+  );
+}
+
+function airyResult(text: string): string {
+  return text
+    .replace(/\n(?=(Ce que|Résultat|Détails|Validation|Risques|Plan appliqué|Réponse courte|Recommandation|Pourquoi|Prochaines étapes)\b)/g, '\n\n')
+    .replace(/((?:Ce que|Résultat|Détails|Validation|Risques|Plan appliqué|Réponse courte|Recommandation|Pourquoi|Prochaines étapes)[^\n]*)\n(?!\n)/g, '$1\n\n');
 }
 
 interface OtherAgent {
@@ -140,7 +168,13 @@ function AttachStaticLine({ item, raw }: { item: StaticLine; raw: boolean }) {
     <Text color={color} wrap="truncate-end">
       <Text color={UI.muted}>• </Text>
       <Text bold>{event.label}</Text>
-      {detail ? <Text color={event.kind === 'command_output' ? UI.muted : color}> {truncate(detail, process.stdout.columns ? process.stdout.columns - 8 : 120)}</Text> : null}
+      {detail ? (
+        event.kind === 'command' ? (
+          <Text color={UI.accent} backgroundColor="#302833"> {truncate(detail, process.stdout.columns ? process.stdout.columns - 10 : 118)} </Text>
+        ) : (
+          <Text color={event.kind === 'command_output' ? UI.muted : color}> {truncate(detail, process.stdout.columns ? process.stdout.columns - 8 : 120)}</Text>
+        )
+      ) : null}
     </Text>
   );
 }
@@ -177,12 +211,16 @@ function AttachLaunchHeader({ item }: { item: LaunchCard }) {
 function AttachResultCard({ item }: { item: ResultCard }) {
   const st = STATE_META[item.info.state];
   return (
-    <Box borderStyle="single" borderColor={st.color} flexDirection="column" paddingX={1} marginTop={1}>
-      <Text color={COLOR.cream} bold>
-        Result · {item.info.name} [{st.label}]
-      </Text>
-      <Md text={item.result} />
-    </Box>
+    <>
+      <Box borderStyle="single" borderColor={COLOR.creamMuted} flexDirection="column" paddingX={1} marginTop={1}>
+        <Text color={COLOR.cream} bold>
+          {t('agent.resultTitle')} · {item.info.name} [{st.label}]
+        </Text>
+        <Text> </Text>
+        <Md text={airyResult(item.result)} />
+      </Box>
+      <AttachedChanges info={item.info} changes={item.changes} />
+    </>
   );
 }
 
@@ -263,8 +301,8 @@ export function AttachApp({ agentRef, sock, token }: { agentRef: string; sock: s
     const key = `${info.id}:${info.state}:${info.lastResult.length}:${info.lastResult.slice(0, 24)}`;
     if (renderedResultKey.current === key) return;
     renderedResultKey.current = key;
-    setResultCards((prev) => [...prev, { key: ++keySeq.current, info: { ...info }, result: info.lastResult ?? '' }]);
-  }, [info?.id, info?.state, info?.lastResult]);
+    setResultCards((prev) => [...prev, { key: ++keySeq.current, info: { ...info }, result: info.lastResult ?? '', changes }]);
+  }, [info?.id, info?.state, info?.lastResult, changes]);
 
   // Audible alert in THIS terminal when a new interaction arrives — the hub
   // also rings, but the user may well be looking at the agent's terminal.
@@ -413,7 +451,9 @@ export function AttachApp({ agentRef, sock, token }: { agentRef: string; sock: s
             </Box>
           ) : null}
           {terminal && info.lastResult ? (
-            <Text color={COLOR.creamMuted}>Result was appended above; native mouse scroll stays available.</Text>
+            <Text color={COLOR.creamMuted}>
+              {t('attach.resultAppended', { changes: formatChangeStats(summarizeChanges(changesForAgent(changes, info.id))) })}
+            </Text>
           ) : null}
           {others.length > 0 ? (
             <Text color={UI.muted} wrap="truncate-end">
@@ -474,12 +514,16 @@ export function AttachApp({ agentRef, sock, token }: { agentRef: string; sock: s
                 </Text>
               ) : null}
               {info.lastResult && (info.state === 'done' || info.state === 'error' || info.state === 'stopped') ? (
-                <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1} marginTop={1}>
-                  <Text color={UI.ok} bold>
-                    Result
+                <Box borderStyle="single" borderColor={COLOR.creamMuted} flexDirection="column" paddingX={1} marginTop={1}>
+                  <Text color={COLOR.cream} bold>
+                    {t('agent.resultTitle')}
                   </Text>
-                  <Md text={info.lastResult} />
+                  <Text> </Text>
+                  <Md text={airyResult(info.lastResult)} />
                 </Box>
+              ) : null}
+              {(info.state === 'done' || info.lastResult || changesForAgent(changes, info.id).length > 0) ? (
+                <AttachedChanges info={info} changes={changes} />
               ) : null}
             </>
           ) : (

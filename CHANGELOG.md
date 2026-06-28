@@ -2,6 +2,18 @@
 
 All notable changes to Parallel are documented here.
 
+## 0.5.2 - 2026-06-28
+
+### 0.5.2 Changed
+
+- Reworked Hub agent rows so task, result, validation, file, risk, and change summaries wrap instead of being truncated.
+- Moved per-agent runtime, context, tool, cache, and cost telemetry into a separate muted strip after `Changes`.
+- Made Hub scrolling operate over long agent rows so large multi-agent sessions can page through each agent result.
+
+### 0.5.2 Fixed
+
+- Removed the detailed “Real changes” diff box from focused agent transcripts; compact change counts remain in the Hub and full patches remain available through `/diff`.
+
 ## 0.5.1 - 2026-06-27
 
 ### 0.5.1 Added

@@ -8,6 +8,8 @@ import { Spinner } from './Spinner.js';
 import { Timeline } from './Timeline.js';
 import { MARK, MODE, STATE_META, UI, ANIM, COLOR } from './tokens.js';
 import { latestSignal, toUIEvents } from './events.js';
+import { changesForAgent, formatChangeStats, summarizeChanges } from './changeSummary.js';
+import { t } from '../i18n.js';
 
 export const KIND_COLOR: Record<string, string> = {
   tool: UI.accent,
@@ -91,6 +93,63 @@ export function hubSummaryLines(text: string, maxLines = 4, maxWidth = 100): str
   return out;
 }
 
+function hubSummaryFields(text: string): { outcome: string; validation?: string; files?: string; risks?: string } {
+  const cleanLines = text
+    .replace(/\r/g, '')
+    .split('\n')
+    .map(cleanHubSummary)
+    .filter(Boolean);
+  return {
+    outcome: firstSectionLine(text, ['ce que j', 'résultat', 'outcome', 'what i did', 'réponse courte', 'mode task']) ?? cleanLines[0] ?? 'Task complete.',
+    validation: firstSectionLine(text, ['validation', 'vérifié', 'verified', 'tests']) ?? undefined,
+    files: firstSectionLine(text, ['fichiers', 'files']) ?? fileSummary(text) ?? undefined,
+    risks: firstSectionLine(text, ['risque', 'risk', 'caveat', 'problème', 'remaining']) ?? undefined,
+  };
+}
+
+function wrapWords(text: string, width: number): string[] {
+  const max = Math.max(10, width);
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    if (!current) {
+      current = word;
+      continue;
+    }
+    if (current.length + 1 + word.length <= max) {
+      current += ` ${word}`;
+      continue;
+    }
+    lines.push(current);
+    current = word;
+  }
+  if (current) lines.push(current);
+  return lines.length > 0 ? lines : [''];
+}
+
+export function hubWrappedLineCount(value: string, cols: number): number {
+  const labelWidth = 10;
+  const textWidth = Math.max(18, cols - labelWidth - 4);
+  return wrapWords(value, textWidth).length;
+}
+
+function HubField({ label, value, color, cols }: { label: string; value: string; color: string; cols: number }) {
+  const labelWidth = 10;
+  const textWidth = Math.max(18, cols - labelWidth - 4);
+  const lines = wrapWords(value, textWidth);
+  return (
+    <Box flexDirection="column">
+      {lines.map((line, i) => (
+        <Text key={`${label}-${i}`} wrap="wrap">
+          <Text color={UI.muted}>  {i === 0 ? label.padEnd(labelWidth) : ''.padEnd(labelWidth)}</Text>
+          <Text color={color}>{line}</Text>
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
 function ResultBlock({ agent, compact = false }: { agent: AgentInfo; compact?: boolean }) {
   if (!agent.lastResult) return null;
   if (compact) {
@@ -101,12 +160,16 @@ function ResultBlock({ agent, compact = false }: { agent: AgentInfo; compact?: b
       </Text>
     );
   }
+  const airy = agent.lastResult
+    .replace(/\n(?=(Ce que|Résultat|Détails|Validation|Risques|Plan appliqué|Réponse courte|Recommandation|Pourquoi|Prochaines étapes)\b)/g, '\n\n')
+    .replace(/((?:Ce que|Résultat|Détails|Validation|Risques|Plan appliqué|Réponse courte|Recommandation|Pourquoi|Prochaines étapes)[^\n]*)\n(?!\n)/g, '$1\n\n');
   return (
-    <Box borderStyle="single" borderColor="gray" flexDirection="column" paddingX={1} marginTop={1}>
-      <Text color={UI.ok} bold>
-        Result
+    <Box borderStyle="single" borderColor={COLOR.creamMuted} flexDirection="column" paddingX={1} marginTop={1}>
+      <Text color={COLOR.cream} bold>
+        {t('agent.resultTitle')}
       </Text>
-      <Md text={agent.lastResult} />
+      <Text> </Text>
+      <Md text={airy} />
     </Box>
   );
 }
@@ -173,10 +236,12 @@ export function ProgressSteps({
 function AgentRowView({
   agent,
   logs,
+  changes = [],
   cols,
 }: {
   agent: AgentInfo;
   logs: LogEntry[];
+  changes?: FileChange[];
   cols: number;
 }) {
   const meta = STATE_META[agent.state];
@@ -205,25 +270,27 @@ function AgentRowView({
       : `full /focus ${agent.alias || agent.name} · term /attach ${agent.alias || agent.name}`
     : `stop /stop ${agent.alias || agent.name} · full /focus ${agent.alias || agent.name} · term /attach ${agent.alias || agent.name}`;
   const actionBudget = Math.min(44, quickActions.length + 2);
-  const taskMax = Math.max(10, cols - 18 - actionBudget);
   const line2Max = Math.max(10, cols - 2);
   const telemetry = formatAgentTelemetry(agent);
   const signal = latestSignal(agent, toUIEvents(logs));
   const specialist = agent.specialist ? ` #${agent.specialist}` : '';
-  const claims = agent.claims && agent.claims.length > 0 ? `⚑ ${truncate(agent.claims.join(', '), Math.max(12, Math.floor(line2Max * 0.35)))}` : '';
-  const summary = agent.lastResult ? hubSummaryLines(agent.lastResult, 4, Math.max(20, line2Max - 4)) : [];
+  const claims = agent.claims && agent.claims.length > 0 ? `⚑ ${agent.claims.join(', ')}` : '';
+  const summary = agent.lastResult ? hubSummaryFields(agent.lastResult) : null;
+  const ownChanges = changesForAgent(changes, agent.id);
+  const changeStats = summarizeChanges(ownChanges);
+  const changeLine = ownChanges.length > 0 || terminal ? formatChangeStats(changeStats) : '';
+  const telemetryLine = `Session ${telemetry}`;
 
   let line2: { text: string; color: string } | null = null;
   if (!agent.lastResult && signal && signal !== agent.task) {
-    const detail = claims ? `${truncate(signal, Math.max(10, line2Max - claims.length - 4))} · ${claims}` : signal;
-    line2 = { text: `▸ ${truncate(detail, line2Max)}`, color: UI.accent };
+    const detail = claims ? `${signal} · ${claims}` : signal;
+    line2 = { text: `▸ ${detail}`, color: UI.accent };
   } else if (claims) {
     line2 = { text: claims, color: UI.warn };
   }
 
   return (
     <Box flexDirection="column" marginBottom={0} paddingLeft={1}>
-      {/* Line 1: mark/spinner + name + mode + task */}
       <Box flexDirection="row" justifyContent="space-between">
         <Text wrap="truncate-end">
           {SPINNER_STATES.has(agent.state) ? (
@@ -236,44 +303,86 @@ function AgentRowView({
           <Text color={mode.color}> [{mode.label}]</Text>
           {agent.profile ? <Text color={UI.muted}> [{agent.profile.toUpperCase()}]</Text> : null}
           {specialist ? <Text color={UI.note}>{specialist}</Text> : null}
-          <Text color={UI.text}>  {truncate(agent.task, taskMax)}</Text>
+          <Text color={meta.color}>  {meta.label}</Text>
         </Text>
         <Text color={UI.muted} wrap="truncate-end">
           {truncate(quickActions, actionBudget)}
         </Text>
       </Box>
-      {summary.length > 0 ? (
+      <HubField label="Task" value={agent.task} color={UI.text} cols={line2Max} />
+      {summary ? (
         <Box flexDirection="column">
-          {summary.map((line, i) => (
-            <Box key={`${i}-${line}`} flexDirection="row" justifyContent={i === 0 ? 'space-between' : undefined}>
-              <Text color={COLOR.cream} wrap="truncate-end">
-                <Text color={COLOR.cream}>• </Text>
-                {line}
-              </Text>
-              {i === 0 ? <Text color={UI.muted}>{telemetry}</Text> : null}
-            </Box>
-          ))}
+          <HubField label="Result" value={summary.outcome} color={COLOR.cream} cols={line2Max} />
+          {summary.validation ? <HubField label="Verified" value={summary.validation} color={UI.ok} cols={line2Max} /> : null}
+          {summary.files ? <HubField label="Files" value={summary.files} color={COLOR.creamMuted} cols={line2Max} /> : null}
+          {summary.risks ? <HubField label="Risk" value={summary.risks} color={UI.warn} cols={line2Max} /> : null}
+          {changeLine ? (
+            <HubField label="Changes" value={changeLine} color={changeStats.files > 0 ? UI.ok : UI.warn} cols={line2Max} />
+          ) : null}
+          <Text color={COLOR.creamMuted} backgroundColor={COLOR.promptBackground} italic wrap="wrap">
+            {'  '}{telemetryLine}
+          </Text>
         </Box>
       ) : line2 ? (
-        <Box flexDirection="row" justifyContent="space-between">
-          <Text color={line2.color} wrap="truncate-end">
+        <Box flexDirection="column">
+          <Text color={line2.color} wrap="wrap">
             {line2.text}
           </Text>
-          <Text color={UI.muted}>{telemetry}</Text>
+          <Text color={COLOR.creamMuted} backgroundColor={COLOR.promptBackground} italic wrap="wrap">
+            {'  '}{telemetryLine}
+          </Text>
         </Box>
       ) : null}
       {!agent.lastResult ? <ProgressSteps agent={agent} max={3} cols={line2Max} showRemaining /> : null}
+      {!agent.lastResult && changeLine ? (
+        <HubField label="Changes" value={changeLine} color={changeStats.files > 0 ? UI.ok : UI.warn} cols={line2Max} />
+      ) : null}
     </Box>
   );
 }
 
-function sameAgentRowProps(prev: { agent: AgentInfo; logs: LogEntry[]; cols: number }, next: { agent: AgentInfo; logs: LogEntry[]; cols: number }): boolean {
+export function estimateAgentRowLines(agent: AgentInfo, logs: LogEntry[], changes: FileChange[] = [], cols: number): number {
+  const terminal = agent.state === 'done' || agent.state === 'error' || agent.state === 'stopped';
+  const line2Max = Math.max(10, cols - 2);
+  const summary = agent.lastResult ? hubSummaryFields(agent.lastResult) : null;
+  const ownChanges = changesForAgent(changes, agent.id);
+  const changeStats = summarizeChanges(ownChanges);
+  const changeLine = ownChanges.length > 0 || terminal ? formatChangeStats(changeStats) : '';
+  let lines = 1 + hubWrappedLineCount(agent.task, line2Max);
+
+  if (summary) {
+    lines += hubWrappedLineCount(summary.outcome, line2Max);
+    if (summary.validation) lines += hubWrappedLineCount(summary.validation, line2Max);
+    if (summary.files) lines += hubWrappedLineCount(summary.files, line2Max);
+    if (summary.risks) lines += hubWrappedLineCount(summary.risks, line2Max);
+    if (changeLine) lines += hubWrappedLineCount(changeLine, line2Max);
+    lines += hubWrappedLineCount(`Session ${formatAgentTelemetry(agent)}`, line2Max);
+    return lines;
+  }
+
+  const signal = latestSignal(agent, toUIEvents(logs));
+  const claims = agent.claims && agent.claims.length > 0 ? `⚑ ${agent.claims.join(', ')}` : '';
+  if ((!agent.lastResult && signal && signal !== agent.task) || claims) {
+    lines += hubWrappedLineCount(signal && signal !== agent.task ? `▸ ${signal}${claims ? ` · ${claims}` : ''}` : claims, line2Max);
+    lines += hubWrappedLineCount(`Session ${formatAgentTelemetry(agent)}`, line2Max);
+  }
+
+  if (!agent.lastResult && agent.progressSteps && agent.progressSteps.length > 0) {
+    lines += Math.min(3, agent.progressSteps.length);
+    if (agent.progressSteps.length > 3) lines += 1;
+  }
+  if (!agent.lastResult && changeLine) lines += hubWrappedLineCount(changeLine, line2Max);
+  return lines;
+}
+
+function sameAgentRowProps(prev: { agent: AgentInfo; logs: LogEntry[]; changes?: FileChange[]; cols: number }, next: { agent: AgentInfo; logs: LogEntry[]; changes?: FileChange[]; cols: number }): boolean {
   const a = prev.agent;
   const b = next.agent;
   const prevLast = prev.logs[prev.logs.length - 1]?.seq ?? 0;
   const nextLast = next.logs[next.logs.length - 1]?.seq ?? 0;
   return (
     prev.cols === next.cols &&
+    prev.changes === next.changes &&
     prevLast === nextLast &&
     a.id === b.id &&
     a.name === b.name &&
